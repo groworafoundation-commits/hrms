@@ -1,0 +1,31 @@
+<div class="rh">
+    <div class="rh-top">
+        @if (Company?.Logo is not null) { <img class="rh-logo" src="@Company.Logo" alt="" /> }
+        <div class="rh-co">
+            <div class="rh-name">@(Company?.Name ?? "")</div>
+            @foreach (var line in Company?.AddressLines ?? []) { <div>@line</div> }
+            @if (Contact is { Length: > 0 }) { <div>@Contact</div> }
+        </div>
+        <div class="rh-ref">
+            @if (!string.IsNullOrEmpty(Company?.VatNo)) { <div>TRN: <b>@Company.VatNo</b></div> }
+            <div>Printed @DateTime.Now.ToString("dd MMM yyyy HH:mm", System.Globalization.CultureInfo.InvariantCulture)</div>
+            @if (!string.IsNullOrEmpty(Company?.Currency)) { <div>Amounts in @Company.Currency</div> }
+        </div>
+    </div>
+    <div class="rh-rule"></div>
+    <div class="rh-title">@Title</div>
+    @if (!string.IsNullOrWhiteSpace(Subtitle)) { <div class="rh-sub">@Subtitle</div> }
+</div>
+
+@code {
+    [Parameter] public CompanyInfo? Company { get; set; }
+    [Parameter] public string Title { get; set; } = "";
+    [Parameter] public string? Subtitle { get; set; }
+
+    string Contact => string.Join("   ", new[]
+    {
+        string.IsNullOrWhiteSpace(Company?.Phone) ? null : "Tel: " + Company.Phone,
+        string.IsNullOrWhiteSpace(Company?.Fax) ? null : "Fax: " + Company.Fax,
+        string.IsNullOrWhiteSpace(Company?.Email) ? null : Company.Email,
+    }.Where(x => x is not null));
+}

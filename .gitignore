@@ -1,0 +1,20 @@
+# build output
+bin/
+obj/
+.vs/
+*.user
+*.suo
+
+# logs and captures
+*.log
+*.err
+shot_*.png
+
+# secrets and machine-specific files must never be committed
+*.pfx
+*.pem
+*.key
+hradmin.pw
+appsettings.*.local.json
+secrets.json
+.hrms/

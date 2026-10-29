@@ -1,0 +1,102 @@
+@page "/payroll/structure"
+@inject AuthState Auth
+@inject HrmsClient Api
+
+<PageTitle>Salary structure</PageTitle>
+
+<section class="greeting"><div><h1>Payroll</h1><p>Current fixed salary structure per employee, from the grade details effective today.</p></div></section>
+<PayrollNav />
+
+<section class="card toolbar">
+    <label class="search flat"><Icon Name="search" Size="18" /><input type="text" placeholder="Search employee" @bind="query" @bind:event="oninput" @bind:after="Debounced" /></label>
+    <div class="seg">
+        @foreach (var s in new[] { "active", "inactive", "all" })
+        {
+            <button type="button" class="@(status == s ? "on" : "")" @onclick="() => SetStatus(s)">@Fmt.Title(s)</button>
+        }
+    </div>
+</section>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    @if (rows is not null)
+    {
+        <section class="kpis">
+            <article class="card kpi"><span class="kpi-icon tone-blue"><Icon Name="users" Size="26" /></span><div class="kpi-body"><small>Employees</small><strong>@rows.Count</strong></div></article>
+            <article class="card kpi"><span class="kpi-icon tone-violet"><Icon Name="wallet" Size="26" /></span><div class="kpi-body"><small>Total basic</small><strong>@Fmt.Money(rows.Sum(r => r.Basic))</strong></div></article>
+            <article class="card kpi"><span class="kpi-icon tone-green"><Icon Name="trend-up" Size="26" /></span><div class="kpi-body"><small>Total fixed pay</small><strong>@Fmt.Money(rows.Sum(r => r.Total))</strong></div></article>
+            <article class="card kpi"><span class="kpi-icon tone-orange"><Icon Name="check" Size="26" /></span><div class="kpi-body"><small>Average fixed pay</small><strong>@Fmt.Money(rows.Count == 0 ? 0 : rows.Sum(r => r.Total) / rows.Count)</strong></div></article>
+        </section>
+        <section class="card">
+            <div class="scroll-x">
+            <table class="tbl rows">
+                <thead><tr><th>Employee</th><th class="r">Basic</th><th class="r hide-sm">Accommodation</th><th class="r hide-sm">Mobile</th><th class="r hide-sm">Position</th><th class="r hide-sm">Sewa</th><th class="r hide-sm">Travel</th><th class="r">Total fixed</th><th class="r hide-sm">WPS part</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var r in rows)
+                    {
+                        <tr @onclick="() => Open(r.EmpCode)">
+                            <td><div class="who"><Avatar Name="@r.Name" Size="34" /><div><strong>@Fmt.Title(r.Name)</strong><small>@r.EmpCode | @r.Designation</small></div></div></td>
+                            <td class="r">@Fmt.Money2(r.Basic)</td>
+                            <td class="r hide-sm">@Fmt.Money2(r.Accommodation)</td>
+                            <td class="r hide-sm">@Fmt.Money2(r.Mobile)</td>
+                            <td class="r hide-sm">@Fmt.Money2(r.Position)</td>
+                            <td class="r hide-sm">@Fmt.Money2(r.Sewa)</td>
+                            <td class="r hide-sm">@Fmt.Money2(r.Travel)</td>
+                            <td class="r"><b>@Fmt.Money2(r.Total)</b></td>
+                            <td class="r hide-sm">@Fmt.Money2(r.Wps)</td>
+                            <td class="r">@if (Auth.CanEdit(AuthState.Grade)) { <button type="button" class="btn ghost sm" @onclick="() => editing = r" @onclick:stopPropagation="true">Edit</button> }</td>
+                        </tr>
+                    }
+                    @if (rows.Count == 0) { <tr><td colspan="10" class="empty-row">No salary structures found.</td></tr> }
+                </tbody>
+            </table>
+            </div>
+        </section>
+    }
+</State>
+
+@if (editing is not null)
+{
+    <Modal Title="@("Salary structure - " + Fmt.Title(editing.Name))" OnClose="() => editing = null">
+        <StructureForm EmpCode="@editing.EmpCode" OnSaved="Saved" OnCancel="() => editing = null" />
+    </Modal>
+}
+@if (toast is not null) { <div class="toast">@toast</div> }
+
+@code {
+    [Inject] NavigationManager Nav { get; set; } = default!;
+    List<StructureRow>? rows;
+    StructureRow? editing;
+
+    string? toast;
+    async Task Toast(string message) { toast = message; StateHasChanged(); await Task.Delay(3500); toast = null; StateHasChanged(); }
+
+    async Task Saved() { editing = null; await Load(); _ = Toast("Salary structure saved"); }
+
+    string query = "", status = "active";
+    bool loading = true;
+    string? error;
+    CancellationTokenSource? debounce;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Load();
+        if (Nav.Uri.Contains("add=1", StringComparison.OrdinalIgnoreCase)) editing = rows?.FirstOrDefault();
+    }
+    void Open(string code) => Nav.NavigateTo($"employees/{Uri.EscapeDataString(code)}");
+    async Task SetStatus(string s) { status = s; await Load(); }
+
+    async Task Debounced()
+    {
+        debounce?.Cancel(); debounce = new CancellationTokenSource();
+        try { await Task.Delay(300, debounce.Token); } catch (TaskCanceledException) { return; }
+        await Load();
+    }
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try { rows = await Api.Structure(query, status); }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+}

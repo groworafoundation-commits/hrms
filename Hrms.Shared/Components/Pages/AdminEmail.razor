@@ -1,0 +1,66 @@
+@page "/admin/email"
+@inject PortalClient Portal
+@inject AuthState Auth
+
+<PageTitle>Email and alerts</PageTitle>
+
+<section class="greeting"><div><h1>Email and alerts</h1><p>Every approval and update also goes by email to people who have an email address on their account.</p></div></section>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    @if (data is not null)
+    {
+        <section class="card">
+            <div class="card-head"><h3>Email server</h3><span class="att-status sm @(data.Configured ? "st-present" : "st-missing")">@(data.Configured ? "Connected setup" : "Not set up")</span></div>
+            @if (data.Configured) { <p class="muted note">Sending through @data.Host as @data.From.</p> }
+            else { <p class="muted note">No email server is configured, so emails are listed below as Skipped. In-app notifications (the bell) work either way. To switch email on, set the SMTP server in the API's settings (Hrms:Smtp:Host, Port, User, Password, From) and restart it.</p> }
+            @if (Auth.CanAdd("H209"))
+            {
+                <div class="toolbar"><input class="sel" type="text" placeholder="Send a test email to..." @bind="testTo" /><button type="button" class="btn primary" disabled="@busy" @onclick="SendTest">Queue test email</button></div>
+            }
+            @if (testMsg is not null) { <div class="@(testOk ? "form-ok" : "form-error")">@testMsg</div> }
+        </section>
+
+        <section class="card">
+            <div class="card-head"><h3>Outbox</h3><button type="button" class="btn ghost sm" @onclick="Load">Refresh</button></div>
+            <table class="tbl rows">
+                <thead><tr><th>Queued</th><th>To</th><th>Subject</th><th>Status</th><th class="hide-sm">Detail</th></tr></thead>
+                <tbody>
+                    @foreach (var r in data.Rows)
+                    {
+                        <tr>
+                            <td>@r.CreatedAt.ToString("d MMM HH:mm")</td><td>@r.ToAddress</td><td>@r.Subject</td>
+                            <td><span class="att-status sm @(r.Status == "Sent" ? "st-present" : r.Status == "Failed" ? "st-absent" : r.Status == "Skipped" ? "st-off" : "st-missing")">@r.Status</span></td>
+                            <td class="hide-sm muted">@r.Error</td>
+                        </tr>
+                    }
+                    @if (data.Rows.Count == 0) { <tr><td colspan="5" class="empty-row">No emails yet.</td></tr> }
+                </tbody>
+            </table>
+        </section>
+    }
+</State>
+
+@code {
+    EmailOverview? data;
+    string testTo = "";
+    string? error, testMsg;
+    bool loading = true, busy, testOk;
+
+    protected override Task OnInitializedAsync() => Load();
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try { data = await Portal.EmailOverview(); }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+
+    async Task SendTest()
+    {
+        busy = true; testMsg = null;
+        var r = await Portal.TestEmail(testTo);
+        busy = false; testOk = r.Ok; testMsg = r.Ok ? "Queued. It is sent within about 20 seconds." : r.Error ?? "Could not queue the email.";
+        if (r.Ok) await Load();
+    }
+}

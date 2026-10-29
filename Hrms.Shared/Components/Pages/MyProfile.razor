@@ -1,0 +1,71 @@
+@page "/my/profile"
+@inject PortalClient Portal
+@inject AuthState Auth
+
+<PageTitle>My profile</PageTitle>
+
+<section class="greeting"><div><h1>My profile</h1><p>Your employment details. Ask HR to change anything that is wrong.</p></div></section>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    @if (e is not null)
+    {
+        <section class="card profile">
+            <Avatar Name="@e.Name" Size="72" />
+            <div class="grow">
+                <h2>@Fmt.Title(e.Name)</h2>
+                <p class="muted">@(e.Designation ?? "-") | @e.EmpCode</p>
+                <StatusBadge Status="@e.Status" />
+            </div>
+        </section>
+
+        <section class="grid g-two">
+            <article class="card">
+                <div class="card-head"><h3>Personal</h3></div>
+                <dl class="facts2">
+                    <div><dt>Gender</dt><dd>@(e.Gender ?? "-")</dd></div>
+                    <div><dt>Date of birth</dt><dd>@Fmt.Date(e.Dob)</dd></div>
+                    <div><dt>Marital status</dt><dd>@(e.MaritalStatus ?? "-")</dd></div>
+                    <div><dt>Country</dt><dd>@(e.Country ?? "-")</dd></div>
+                    <div><dt>Phone</dt><dd>@(e.Phone ?? "-")</dd></div>
+                    <div><dt>Address</dt><dd>@(e.Address ?? "-")</dd></div>
+                </dl>
+            </article>
+            <article class="card">
+                <div class="card-head"><h3>Employment</h3></div>
+                <dl class="facts2">
+                    <div><dt>Date of joining</dt><dd>@Fmt.Date(e.Doj)</dd></div>
+                    <div><dt>Designation</dt><dd>@(e.Designation ?? "-")</dd></div>
+                    <div><dt>Payment mode</dt><dd>@(e.PaymentMode ?? "-")</dd></div>
+                    <div><dt>Bank</dt><dd>@(e.Bank ?? "-")</dd></div>
+                    <div><dt>Account</dt><dd>@(e.BankAccount ?? "-")</dd></div>
+                    <div><dt>Office phone</dt><dd>@(e.OfficePhone ?? "-")</dd></div>
+                </dl>
+            </article>
+        </section>
+
+        <section class="card">
+            <div class="card-head"><h3>Sign-in</h3></div>
+            <dl class="facts2">
+                <div><dt>User</dt><dd>@Auth.User?.UserId</dd></div>
+                <div><dt>Role</dt><dd>@Auth.User?.RoleName</dd></div>
+                <div><dt>Company</dt><dd>@Auth.User?.Company</dd></div>
+            </dl>
+        </section>
+    }
+</State>
+
+@code {
+    EmployeeRow? e;
+    bool loading = true;
+    string? error;
+
+    protected override Task OnInitializedAsync() => Load();
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try { e = (await Portal.Me())?.Employee; }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+}

@@ -1,0 +1,296 @@
+@page "/employees/{Code}"
+@inject AuthState Auth
+@inject HrmsClient Api
+@inject NavigationManager Nav
+
+<PageTitle>Employee</PageTitle>
+
+<a class="link back" href="employees"><Icon Name="chevron-right" Size="14" /> Back to employees</a>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    @if (d is not null)
+    {
+        var e = d.Employee;
+        <section class="card profile">
+            <Avatar Name="@e.Name" Size="72" />
+            <div class="grow">
+                <h1>@Fmt.Title(e.Name)</h1>
+                <p class="muted">@e.EmpCode | @(string.IsNullOrWhiteSpace(e.Designation) ? "No designation" : e.Designation)</p>
+            </div>
+            <StatusBadge Status="@(e.Status == "active" ? "Active" : "Inactive")" />
+            <div class="row-actions">
+                @if (Auth.CanEdit(AuthState.EmployeeMaster)) { <button type="button" class="btn ghost" @onclick='() => dialog = "master"'>Edit employee</button> }
+                @if (Auth.CanDelete(AuthState.EmployeeMaster)) { <button type="button" class="btn ghost" @onclick='() => { dialog = "delete"; dialogError = null; }'>Delete</button> }
+            </div>
+        </section>
+
+        <section class="grid g-two">
+            <article class="card">
+                <div class="card-head"><h3>Personal</h3></div>
+                <dl class="facts2">
+                    <div><dt>Date of birth</dt><dd>@Fmt.Date(e.Dob)</dd></div>
+                    <div><dt>Gender</dt><dd>@(e.Gender == "M" ? "Male" : e.Gender == "F" ? "Female" : "-")</dd></div>
+                    <div><dt>Nationality</dt><dd>@Val(e.Country)</dd></div>
+                    <div><dt>Marital status</dt><dd>@Val(e.MaritalStatus)</dd></div>
+                    <div><dt>Blood group</dt><dd>@Val(e.BloodGroup)</dd></div>
+                    <div><dt>Phone</dt><dd>@Val(e.Phone)</dd></div>
+                    <div><dt>Office number</dt><dd>@Val(e.OfficeNo)</dd></div>
+                    <div><dt>Remarks</dt><dd>@Val(e.Remarks)</dd></div>
+                </dl>
+            </article>
+            <article class="card">
+                <div class="card-head"><h3>Employment and banking</h3>@if (Auth.CanAdd(AuthState.ExtraDetails)) { <button type="button" class="btn ghost sm" @onclick='() => dialog = "extra"'>Update</button> }</div>
+                <dl class="facts2">
+                    <div><dt>Date of joining</dt><dd>@Fmt.Date(e.Doj)</dd></div>
+                    <div><dt>Confirmation date</dt><dd>@Fmt.Date(e.ConfirmDate)</dd></div>
+                    <div><dt>Contract date</dt><dd>@Fmt.Date(e.ContractDate)</dd></div>
+                    <div><dt>Termination date</dt><dd>@Fmt.Date(e.TermDate)</dd></div>
+                    <div><dt>Document no.</dt><dd>@Val(e.DocNo)</dd></div>
+                    <div><dt>Bank</dt><dd>@Val(e.Bank)</dd></div>
+                    <div><dt>Account</dt><dd>@Val(e.BankAccount)</dd></div>
+                    <div><dt>Payment mode</dt><dd>@Val(e.PaymentMode)</dd></div>
+                    <div><dt>Ticket period (years)</dt><dd>@(e.TicketPeriod is > 0 ? e.TicketPeriod.Value.ToString("0.#") : "-")</dd></div>
+                    <div><dt>Entitled days per year</dt><dd>@(e.EntitledYear is > 0 ? e.EntitledYear.ToString() : "-")</dd></div>
+                </dl>
+            </article>
+        </section>
+
+        <section class="card">
+            <div class="card-head"><h3>Extra details history</h3>@if (Auth.CanAdd(AuthState.ExtraDetails)) { <button type="button" class="btn ghost sm" @onclick='() => dialog = "extra"'><Icon Name="plus" Size="14" /> New version</button> }</div>
+            <div class="scroll-x">
+            <table class="tbl">
+                <thead><tr><th>Effective</th><th>Designation</th><th class="hide-sm">Joined</th><th class="hide-sm">Terminated</th><th class="hide-sm">Bank</th><th class="hide-sm">Reference</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var v in versions)
+                    {
+                        <tr>
+                            <td>@Fmt.Date(v.EffectiveDate)</td><td>@Val(v.Designation)</td><td class="hide-sm">@Fmt.Date(v.Doj)</td><td class="hide-sm">@Fmt.Date(v.TermDate)</td>
+                            <td class="hide-sm">@Val(v.Bank)</td><td class="hide-sm">@v.TransNo</td>
+                            <td class="r">@if (versions.Count > 1 && Auth.CanDelete(AuthState.ExtraDetails)) { <button type="button" class="btn ghost sm" @onclick='() => { deleteVersion = v; dialog = "version"; dialogError = null; }'>Delete</button> }</td>
+                        </tr>
+                    }
+                    @if (versions.Count == 0) { <tr><td colspan="7" class="empty-row">No extra details yet. Add the first version.</td></tr> }
+                </tbody>
+            </table>
+            </div>
+        </section>
+
+        <section class="card">
+            <div class="card-head"><h3>Salary structure</h3><div class="row-actions"><span class="muted">Fixed pay effective today</span>@if (Auth.CanAdd(AuthState.Grade)) { <button type="button" class="btn ghost sm" @onclick='() => dialog = "structure"'>Update</button> }</div></div>
+            @if (structure is null)
+            {
+                <p class="muted">No salary structure on file.</p>
+            }
+            else
+            {
+                <div class="typecards">
+                    <div class="typecard static"><small>Basic</small><strong>@Fmt.Money2(structure.Basic)</strong></div>
+                    <div class="typecard static"><small>Accommodation</small><strong>@Fmt.Money2(structure.Accommodation)</strong></div>
+                    <div class="typecard static"><small>Mobile</small><strong>@Fmt.Money2(structure.Mobile)</strong></div>
+                    <div class="typecard static"><small>Position</small><strong>@Fmt.Money2(structure.Position)</strong></div>
+                    <div class="typecard static"><small>Sewa</small><strong>@Fmt.Money2(structure.Sewa)</strong></div>
+                    <div class="typecard static"><small>Travel</small><strong>@Fmt.Money2(structure.Travel)</strong></div>
+                    <div class="typecard static on"><small>Total fixed</small><strong>@Fmt.Money2(structure.Total)</strong></div>
+                </div>
+            }
+        </section>
+
+        <section class="grid g-two">
+            <article class="card">
+                <div class="card-head"><h3>Leave history</h3>@if (Auth.CanAdd(AuthState.Leave)) { <button type="button" class="btn ghost sm" @onclick='() => dialog = "leave"'><Icon Name="plus" Size="14" /> Add leave</button> }</div>
+                <ul class="list compact">
+                    @foreach (var l in d.Leave)
+                    {
+                        <li><div class="grow"><strong>@l.LeaveName</strong><small>@Fmt.Range(l.FromDate, l.ToDate) | @l.Days.ToString("0.#") days</small></div><StatusBadge Status="@l.Status" /></li>
+                    }
+                    @if (d.Leave.Count == 0) { <li class="muted">No leave recorded.</li> }
+                </ul>
+            </article>
+            <article class="card">
+                <div class="card-head"><h3>Recent payslips</h3></div>
+                <table class="tbl">
+                    <thead><tr><th>Month</th><th class="r">Basic</th><th class="r">Deductions</th><th class="r">Net</th></tr></thead>
+                    <tbody>
+                        @foreach (var p in d.Payslips)
+                        {
+                            <tr><td>@Fmt.MonthLabel(p.Month)</td><td class="r">@Fmt.Money(p.Basic)</td><td class="r">@Fmt.Money(p.Deduction)</td><td class="r"><b>@Fmt.Money(p.Net)</b></td></tr>
+                        }
+                        @if (d.Payslips.Count == 0) { <tr><td colspan="4" class="empty-row">No payroll processed.</td></tr> }
+                    </tbody>
+                </table>
+            </article>
+        </section>
+
+        <section class="grid g-two">
+            <article class="card">
+                <div class="card-head"><h3>Loans and advances</h3><div class="row-actions">@if (balance is not null) { <span class="muted">Outstanding about @Fmt.Money(balance.Outstanding)</span> }@if (Auth.CanAdd(AuthState.Loans)) { <button type="button" class="btn ghost sm" @onclick='() => dialog = "loan"'><Icon Name="plus" Size="14" /> New</button> }</div></div>
+                <ul class="list compact">
+                    @foreach (var x in loans)
+                    {
+                        <li><div class="grow"><strong>@x.TypeName</strong><small>@Fmt.Date(x.Date) @(x.Installments is > 0 ? "| " + x.Installments.Value.ToString("0.#") + " installments" : "")</small></div><b>@Fmt.Money2(x.Amount)</b></li>
+                    }
+                    @if (loans.Count == 0) { <li class="muted">No loans or advances.</li> }
+                </ul>
+            </article>
+            <article class="card">
+                <div class="card-head"><h3>Variable salary</h3>@if (Auth.CanAdd(AuthState.Variable)) { <button type="button" class="btn ghost sm" @onclick='() => dialog = "variable"'><Icon Name="plus" Size="14" /> Add</button> }</div>
+                <ul class="list compact">
+                    @foreach (var x in variable)
+                    {
+                        <li><div class="grow"><strong>@x.TypeName</strong><small>@Fmt.Date(x.Date)</small></div><b>@Fmt.Money2(x.Amount)</b></li>
+                    }
+                    @if (variable.Count == 0) { <li class="muted">No variable salary entries.</li> }
+                </ul>
+            </article>
+        </section>
+
+        <section class="grid g-two">
+            <article class="card">
+                <div class="card-head"><h3>Accruals</h3></div>
+                <ul class="list compact">
+                    @foreach (var a in accruals)
+                    {
+                        <li><div class="grow"><strong>@a.TypeName</strong><small>@Fmt.Date(a.PaymentDate ?? a.ProcessDate) | @a.LeaveDays.ToString("0.#") leave days</small></div><b>@(a.Amount == 0 ? "-" : Fmt.Money2(a.Amount))</b></li>
+                    }
+                    @if (accruals.Count == 0) { <li class="muted">No accruals.</li> }
+                </ul>
+            </article>
+            <article class="card">
+                <div class="card-head"><h3>Transfers</h3>@if (Auth.CanAdd(AuthState.Transfer)) { <button type="button" class="btn ghost sm" @onclick='() => dialog = "transfer"'><Icon Name="plus" Size="14" /> Add</button> }</div>
+                <ul class="list compact">
+                    @foreach (var t in transfers)
+                    {
+                        <li><div class="grow"><strong>@t.FromLocation to @t.ToLocation</strong><small>@Fmt.Date(t.Date)</small></div>
+                            @if (Auth.CanDelete(AuthState.Transfer)) { <button type="button" class="btn ghost sm" @onclick='() => { deleteTransfer = t; dialog = "transfer-delete"; dialogError = null; }'>Delete</button> }</li>
+                    }
+                    @if (transfers.Count == 0) { <li class="muted">No transfers.</li> }
+                </ul>
+            </article>
+        </section>
+
+        @switch (dialog)
+        {
+            case "master":
+                <Modal Title="Edit employee" OnClose="Close"><EmployeeForm Existing="e" OnSaved="Saved" OnCancel="Close" /></Modal>
+                break;
+            case "extra":
+                <Modal Title="Employment and banking details" OnClose="Close"><ExtraDetailsForm EmpCode="@Code" OnSaved="Saved" OnCancel="Close" /></Modal>
+                break;
+            case "structure":
+                <Modal Title="Salary structure" Size="sm" OnClose="Close"><StructureForm EmpCode="@Code" OnSaved="Saved" OnCancel="Close" /></Modal>
+                break;
+            case "leave":
+                <Modal Title="Add leave" OnClose="Close"><LeaveForm FixedEmp="@Code" OnSaved="Saved" OnCancel="Close" /></Modal>
+                break;
+            case "loan":
+                <Modal Title="New loan or advance" OnClose="Close"><LoanForm FixedEmp="@Code" OnSaved="Saved" OnCancel="Close" /></Modal>
+                break;
+            case "variable":
+                <Modal Title="Add variable salary" OnClose="Close"><VariableForm FixedEmp="@Code" OnSaved="Saved" OnCancel="Close" /></Modal>
+                break;
+            case "transfer":
+                <Modal Title="Add transfer" Size="sm" OnClose="Close"><TransferForm FixedEmp="@Code" OnSaved="Saved" OnCancel="Close" /></Modal>
+                break;
+            case "delete":
+                <ConfirmModal Title="Delete employee" Message="@($"Delete {Fmt.Title(e.Name)} ({e.EmpCode})? This only works for employees without leave, salary or payroll records.")" Busy="busy" Error="dialogError" OnConfirm="DeleteEmployee" OnCancel="Close" />
+                break;
+            case "version":
+                <ConfirmModal Title="Delete version" Message="@($"Delete the extra details version effective {Fmt.Date(deleteVersion?.EffectiveDate)}?")" Busy="busy" Error="dialogError" OnConfirm="DeleteVersion" OnCancel="Close" />
+                break;
+            case "transfer-delete":
+                <ConfirmModal Title="Delete transfer" Message="@($"Delete the transfer to {deleteTransfer?.ToLocation} on {Fmt.Date(deleteTransfer?.Date)}?")" Busy="busy" Error="dialogError" OnConfirm="DeleteTransfer" OnCancel="Close" />
+                break;
+        }
+    }
+</State>
+
+@if (toast is not null) { <div class="toast">@toast</div> }
+
+@code {
+    [Parameter] public string Code { get; set; } = "";
+
+    EmployeeProfile? d;
+    StructureRow? structure;
+    LoanBalance? balance;
+    List<EntryRow> loans = [], variable = [];
+    List<AccrualRow> accruals = [];
+    List<TransferRow> transfers = [];
+    List<ExtraVersion> versions = [];
+    ExtraVersion? deleteVersion;
+    TransferRow? deleteTransfer;
+    string? dialog, dialogError, error, toast;
+    bool loading = true, busy;
+
+    static string Val(string? s) => string.IsNullOrWhiteSpace(s) ? "-" : s;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await Load();
+        var i = Nav.Uri.IndexOf("dialog=", StringComparison.OrdinalIgnoreCase);
+        if (i >= 0 && dialog is null) dialog = Nav.Uri[(i + 7)..].Split('&')[0];
+    }
+
+    void Close() { dialog = null; dialogError = null; }
+
+    async Task Toast(string message) { toast = message; StateHasChanged(); await Task.Delay(3500); toast = null; StateHasChanged(); }
+
+    async Task Saved() { Close(); await Reload(); _ = Toast("Saved"); }
+
+    async Task Run(Func<Task<WriteResult>> action, string done, Func<Task>? after = null)
+    {
+        busy = true; dialogError = null;
+        var r = await action();
+        busy = false;
+        if (!r.Ok) { dialogError = r.Error; return; }
+        Close();
+        if (after is not null) await after(); else await Reload();
+        _ = Toast(done);
+    }
+
+    Task DeleteEmployee() => Run(() => Api.DeleteEmployee(Code), "Employee deleted", () => { Nav.NavigateTo("employees"); return Task.CompletedTask; });
+    Task DeleteVersion() => Run(() => Api.DeleteExtra(Code, deleteVersion!.Id), "Version deleted");
+    Task DeleteTransfer() => Run(() => Api.DeleteTransfer(deleteTransfer!.Id), "Transfer deleted");
+
+    async Task Reload()
+    {
+        try { await Load(refresh: true); } catch { }
+    }
+
+    async Task Load() => await Load(refresh: false);
+
+    async Task Load(bool refresh)
+    {
+        if (!refresh) loading = true;
+        error = null;
+        try
+        {
+            d = await Api.Employee(Code);
+            if (d is null) { error = "Employee not found."; }
+            else
+            {
+                // Show the employee straight away; the sections below fill in as their data arrives.
+                loading = false;
+                StateHasChanged();
+                var from = new DateTime(2019, 1, 1);
+                var to = DateTime.Today.AddYears(1);
+                var tStructure = Api.Structure(Code, "all");
+                var tLoans = Api.Entries("loans", null, Code, null, from, to);
+                var tVariable = Api.Entries("variable", null, Code, null, from, to);
+                var tAccruals = Api.Accruals(null, Code, null);
+                var tTransfers = Api.Transfers(null, Code);
+                var tBalance = Api.Loans(Code, "all");
+                var tVersions = Api.ExtraVersions(Code);
+                await Task.WhenAll(tStructure, tLoans, tVariable, tAccruals, tTransfers, tBalance, tVersions);
+                structure = tStructure.Result?.FirstOrDefault(s => s.EmpCode == Code);
+                loans = tLoans.Result?.Rows.Take(8).ToList() ?? [];
+                variable = tVariable.Result?.Rows.Take(8).ToList() ?? [];
+                accruals = tAccruals.Result?.Rows.Take(8).ToList() ?? [];
+                transfers = tTransfers.Result ?? [];
+                balance = tBalance.Result?.FirstOrDefault(b => b.EmpCode == Code);
+                versions = tVersions.Result ?? [];
+            }
+        }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+}

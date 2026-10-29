@@ -1,0 +1,54 @@
+@page "/payroll/heads"
+@inject HrmsClient Api
+
+<PageTitle>Salary heads</PageTitle>
+
+<section class="greeting"><div><h1>Payroll</h1><p>Salary heads defined in the ERP payroll master, including leave types and loan or advance heads.</p></div></section>
+<PayrollNav />
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    @if (rows is not null)
+    {
+        @foreach (var g in rows.GroupBy(r => r.Kind))
+        {
+            <section class="card">
+                <div class="card-head"><h3>@KindName(g.Key)</h3><span class="muted">@g.Count() heads</span></div>
+                <table class="tbl">
+                    <thead><tr><th>Head</th><th>Code</th><th>Formula</th><th>Accrual</th></tr></thead>
+                    <tbody>
+                        @foreach (var h in g)
+                        {
+                            <tr><td><strong>@h.Name</strong></td><td>@h.Code</td><td class="clip">@(string.IsNullOrWhiteSpace(h.Formula) ? "-" : h.Formula)</td><td>@(h.Accrual ? "Yes" : "-")</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </section>
+        }
+    }
+</State>
+
+@code {
+    List<HeadRow>? rows;
+    bool loading = true;
+    string? error;
+
+    static string KindName(string k) => k switch
+    {
+        "FIX" => "Fixed pay and leave types",
+        "FIX1" => "Fixed values",
+        "FMLA" => "Formula based",
+        "VARI" => "Variable pay",
+        "ADVLON" => "Loans and advances",
+        _ => k,
+    };
+
+    protected override Task OnInitializedAsync() => Load();
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try { rows = await Api.Heads(); }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+}

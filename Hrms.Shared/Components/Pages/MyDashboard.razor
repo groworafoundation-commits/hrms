@@ -1,0 +1,105 @@
+@page "/my"
+@inject PortalClient Portal
+@inject AuthState Auth
+
+<PageTitle>My dashboard</PageTitle>
+
+<section class="greeting">
+    <div>
+        <h1>@Greeting, @FirstName!</h1>
+        <p>Your leave, payslips and profile in one place.</p>
+    </div>
+    <div class="date-chip desk-only">@DateTime.Today.ToString("ddd, dd MMM yyyy") <Icon Name="calendar" Size="18" /></div>
+</section>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    @if (me is not null)
+    {
+        <section class="kpis">
+            <article class="card kpi">
+                <span class="kpi-icon tone-blue"><Icon Name="calendar" Size="26" /></span>
+                <div class="kpi-body"><small>Leave taken in @me.Year</small><strong>@me.Taken.Sum(t => t.Days).ToString("0.#")</strong><span class="kpi-note link">days approved</span></div>
+            </article>
+            <article class="card kpi">
+                <span class="kpi-icon tone-orange"><Icon Name="clock" Size="26" /></span>
+                <div class="kpi-body"><small>Waiting for approval</small><strong>@me.Pending</strong><a class="kpi-note link" href="my/leave">View requests</a></div>
+            </article>
+            <article class="card kpi">
+                <span class="kpi-icon tone-violet"><Icon Name="medical" Size="26" /></span>
+                <div class="kpi-body"><small>Next leave</small><strong>@(next is null ? "None" : Fmt.Short(next.FromDate))</strong><span class="kpi-note link">@(next?.LeaveName ?? "Nothing planned")</span></div>
+            </article>
+            <article class="card kpi">
+                <span class="kpi-icon tone-green"><Icon Name="wallet" Size="26" /></span>
+                <div class="kpi-body"><small>Latest net pay @(pay.Count > 0 ? Fmt.MonthLabel(pay[0].Month) : "")</small><strong>@(pay.Count > 0 ? Fmt.Money(pay[0].Net) : "-")</strong><a class="kpi-note link" href="my/payslips">View payslips</a></div>
+            </article>
+        </section>
+
+        <section class="grid g-two">
+            <article class="card">
+                <div class="card-head"><h3>My leave</h3><a class="link" href="my/leave">View all <Icon Name="arrow-right" Size="14" /></a></div>
+                <ul class="list">
+                    @foreach (var l in leave.OrderByDescending(x => x.FromDate).Take(5))
+                    {
+                        <li><div class="grow"><strong>@l.LeaveName</strong><small>@Fmt.Range(l.FromDate, l.ToDate) | @l.Days.ToString("0.#") days</small></div><StatusBadge Status="@l.Status" /></li>
+                    }
+                    @if (leave.Count == 0) { <li class="muted">You have not taken or requested leave yet.</li> }
+                </ul>
+            </article>
+            <article class="card">
+                <div class="card-head"><h3>My details</h3><a class="link" href="my/profile">Profile <Icon Name="arrow-right" Size="14" /></a></div>
+                <dl class="facts2">
+                    <div><dt>Name</dt><dd>@Fmt.Title(me.Employee.Name)</dd></div>
+                    <div><dt>Employee code</dt><dd>@me.Employee.EmpCode</dd></div>
+                    <div><dt>Designation</dt><dd>@(me.Employee.Designation ?? "-")</dd></div>
+                    <div><dt>Joined</dt><dd>@Fmt.Date(me.Employee.Doj)</dd></div>
+                </dl>
+            </article>
+        </section>
+
+        <section class="card quick">
+            <h3>Quick links</h3>
+            <div class="quick-grid q3">
+                @if (Auth.HasMenu("H106")) { <a class="quick-item" href="my/attendance"><span class="tone-green"><Icon Name="clock" Size="22" /></span>Punch in / out</a> }
+                @if (Auth.HasMenu("H102")) { <a class="quick-item" href="my/leave"><span class="tone-violet"><Icon Name="calendar" Size="22" /></span>Request leave</a> }
+                @if (Auth.HasMenu("H103")) { <a class="quick-item" href="my/calendar"><span class="tone-blue"><Icon Name="calendar-check" Size="22" /></span>My calendar</a> }
+                @if (Auth.HasMenu("H104")) { <a class="quick-item" href="my/payslips"><span class="tone-green"><Icon Name="wallet" Size="22" /></span>My payslips</a> }
+            </div>
+        </section>
+    }
+</State>
+
+@code {
+    MySummary? me;
+    List<LeaveRow> leave = [];
+    List<PayslipRow> pay = [];
+    bool loading = true;
+    string? error;
+
+    string FirstName => Fmt.Title((Auth.User?.FullName ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "there");
+    LeaveRow? next => leave.Where(l => l.ToDate >= DateTime.Today && l.Status != "Rejected").OrderBy(l => l.FromDate).FirstOrDefault();
+
+    static string Greeting
+    {
+        get
+        {
+            var h = DateTime.Now.Hour;
+            if (h >= 17) return "Good evening";
+            return h >= 12 ? "Good afternoon" : "Good morning";
+        }
+    }
+
+    protected override Task OnInitializedAsync() => Load();
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try
+        {
+            me = await Portal.Me();
+            leave = await Portal.MyLeave(new DateTime(DateTime.Today.Year, 1, 1), new DateTime(DateTime.Today.Year + 1, 12, 31)) ?? [];
+            pay = Auth.HasMenu("H104") ? await Portal.MyPayslips() ?? [] : [];
+        }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+}

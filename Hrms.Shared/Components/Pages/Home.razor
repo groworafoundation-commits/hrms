@@ -1,0 +1,242 @@
+﻿@page "/"
+@inject HrmsClient Api
+@inject AuthState Auth
+@inject NavigationManager Nav
+
+<PageTitle>Dashboard</PageTitle>
+
+<section class="greeting">
+    <div>
+        <h1>@Greeting, @FirstName!</h1>
+        <p>Here's what's happening in your organization today.</p>
+    </div>
+    <div class="date-chip desk-only">@DateTime.Today.ToString("ddd, dd MMM yyyy") <Icon Name="calendar" Size="18" /></div>
+</section>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    @if (d is not null)
+    {
+        <section class="kpis">
+            <article class="card kpi">
+                <span class="kpi-icon tone-blue"><Icon Name="users" Size="26" /></span>
+                <div class="kpi-body"><small>Active employees</small><strong>@d.Kpis.Active</strong><span class="kpi-note up">+@d.Kpis.JoinedLast30 in 30 days</span></div>
+            </article>
+            <article class="card kpi">
+                <span class="kpi-icon tone-violet"><Icon Name="medical" Size="26" /></span>
+                <div class="kpi-body"><small>On leave today</small><strong>@d.Kpis.OnLeaveToday</strong><span class="kpi-note link">@d.Kpis.StartingTomorrow starting tomorrow</span></div>
+            </article>
+            <article class="card kpi">
+                <span class="kpi-icon tone-orange"><Icon Name="calendar" Size="26" /></span>
+                <div class="kpi-body"><small>Leave starting in 7 days</small><strong>@d.Kpis.LeaveNext7</strong><a class="kpi-note link" href="leave">View leave</a></div>
+            </article>
+            <article class="card kpi">
+                <span class="kpi-icon tone-green"><Icon Name="wallet" Size="26" /></span>
+                <div class="kpi-body"><small>Net payroll @(d.Kpis.LastMonth is null ? "" : Fmt.MonthLabel(d.Kpis.LastMonth))</small><strong>AED @Fmt.Money(d.Kpis.LastNet)</strong><span class="kpi-note up">@d.Kpis.LastPaid employees paid</span></div>
+            </article>
+        </section>
+
+        <section class="card mob-only">
+            <div class="card-head"><h3>Workforce today</h3></div>
+            <div class="donut-row">
+                <div class="donut" style="--grad:var(--teal) 0 @(WorkingPct)%,var(--violet) 0"><span><strong>@WorkingPct%</strong>Working</span></div>
+                <ul class="legend">
+                    <li><i style="background:var(--teal)"></i>Working<b>@(d.Kpis.Active - d.Kpis.OnLeaveToday)</b></li>
+                    <li><i style="background:var(--violet)"></i>On leave<b>@d.Kpis.OnLeaveToday</b></li>
+                </ul>
+            </div>
+        </section>
+
+        <section class="grid g-top">
+            <article class="card desk-only">
+                <div class="card-head"><h3>Employees on leave, last 6 months</h3></div>
+                <div class="chart-legend">
+                    <span><i style="background:var(--blue)"></i>Annual leave</span>
+                    <span><i style="background:var(--orange)"></i>Unpaid</span>
+                    <span><i style="background:var(--violet)"></i>Other</span>
+                </div>
+                <div class="bars">
+                    @foreach (var day in d.LeaveWeek)
+                    {
+                        <div class="bar-group">
+                            <div class="bar-set">
+                                <i style="height:@Pct(day.Annual)%;background:var(--blue)" title="Annual: @day.Annual"></i>
+                                <i style="height:@Pct(day.Unpaid)%;background:var(--orange)" title="Unpaid: @day.Unpaid"></i>
+                                <i style="height:@Pct(day.Other)%;background:var(--violet)" title="Other: @day.Other"></i>
+                            </div>
+                            <span>@day.Day.ToString("MMM")</span>
+                        </div>
+                    }
+                </div>
+                @if (d.LeaveWeek.All(x => x.Annual + x.Unpaid + x.Other == 0))
+                {
+                    <p class="muted note">No approved leave in the last 6 months.</p>
+                }
+            </article>
+
+            <article class="card">
+                <div class="card-head"><h3>Leave requests</h3><a class="link" href="leave">View all <Icon Name="arrow-right" Size="14" /></a></div>
+                <ul class="list">
+                    @foreach (var r in d.RecentLeave)
+                    {
+                        <li>
+                            <Avatar Name="@r.Name" Size="38" />
+                            <div class="grow"><strong>@Fmt.Title(r.Name)</strong><small>@r.LeaveName</small></div>
+                            <span class="muted dates desk-only">@Fmt.Range(r.FromDate, r.ToDate)</span>
+                            <StatusBadge Status="@r.Status" />
+                        </li>
+                    }
+                </ul>
+            </article>
+
+            <article class="card ai-panel desk-only">
+                <div class="ai-title"><Icon Name="wallet" Size="18" /> Payroll summary</div>
+                <p>@(d.Payroll.Count > 0 ? Fmt.MonthLabel(d.Payroll[0].Month) : "No payroll") run</p>
+                @if (d.Payroll.Count > 0)
+                {
+                    <div class="big">AED @Fmt.Money(d.Payroll[0].Net)</div>
+                    <div class="mini-bars">
+                        @foreach (var m in d.Payroll.Take(6).Reverse())
+                        {
+                            <div><i style="height:@(MonthPct(m))%"></i><span>@Fmt.MonthLabel(m.Month).Substring(0, 3)</span></div>
+                        }
+                    </div>
+                }
+                <a class="chip" href="payroll">Open payroll</a>
+            </article>
+        </section>
+
+        <section class="grid g-mid desk-only">
+            <article class="card">
+                <div class="card-head"><h3>Employees by designation</h3></div>
+                <div class="donut-row">
+                    <div class="donut" style="--grad:@DesignationGradient"><span><strong>@d.Kpis.Active</strong>Active</span></div>
+                    <ul class="legend">
+                        @foreach (var (item, i) in d.Designations.Select((x, i) => (x, i)))
+                        {
+                            <li><i style="background:@Colors[i % Colors.Length]"></i>@item.Name<b>@item.Count</b></li>
+                        }
+                    </ul>
+                </div>
+            </article>
+
+            <article class="card">
+                <div class="card-head"><h3>Upcoming birthdays</h3></div>
+                <ul class="list">
+                    @foreach (var b in d.Birthdays.Take(3))
+                    {
+                        <li><Avatar Name="@b.Name" Size="40" /><div class="grow"><strong>@Fmt.Title(b.Name)</strong><small>@b.Designation | turns @b.Years</small></div><span class="muted">@Fmt.Short(b.Date)</span></li>
+                    }
+                    @if (d.Birthdays.Count == 0) { <li class="muted">No birthdays in the next 45 days.</li> }
+                </ul>
+            </article>
+
+            <article class="card">
+                <div class="card-head"><h3>Work anniversaries</h3></div>
+                <ul class="list">
+                    @foreach (var a in d.Anniversaries.Take(3))
+                    {
+                        <li><Avatar Name="@a.Name" Size="40" /><div class="grow"><strong>@Fmt.Title(a.Name)</strong><small>@a.Years @(a.Years == 1 ? "year" : "years")</small></div><span class="muted">@Fmt.Short(a.Date)</span></li>
+                    }
+                    @if (d.Anniversaries.Count == 0) { <li class="muted">No anniversaries in the next 45 days.</li> }
+                </ul>
+            </article>
+        </section>
+
+        <section class="card quick">
+            <h3>Quick links</h3>
+            <div class="quick-grid q3">
+                <a class="quick-item" href="employees"><span class="tone-blue"><Icon Name="users" Size="22" /></span>Employees</a>
+                <a class="quick-item" href="leave"><span class="tone-violet"><Icon Name="calendar" Size="22" /></span>Leave</a>
+                <a class="quick-item" href="payroll"><span class="tone-green"><Icon Name="wallet" Size="22" /></span>Payroll</a>
+            </div>
+        </section>
+
+        <section class="grid g-two desk-only">
+            <article class="card">
+                <div class="card-head"><h3>New joiners</h3><a class="link" href="employees">View all <Icon Name="arrow-right" Size="14" /></a></div>
+                <ul class="list compact">
+                    @foreach (var p in d.NewJoiners)
+                    {
+                        <li><Avatar Name="@p.Name" Size="34" /><div class="grow"><strong>@Fmt.Title(p.Name)</strong><small>@p.Designation</small></div><span class="muted">@Fmt.Date(p.Doj)</span></li>
+                    }
+                </ul>
+            </article>
+            <article class="card">
+                <div class="card-head"><h3>Payroll history</h3><a class="link" href="payroll">View all <Icon Name="arrow-right" Size="14" /></a></div>
+                <table class="tbl">
+                    <thead><tr><th>Month</th><th class="r">Paid</th><th class="r">Additions</th><th class="r">Deductions</th><th class="r">Net</th></tr></thead>
+                    <tbody>
+                        @foreach (var m in d.Payroll.Take(5))
+                        {
+                            <tr><td>@Fmt.MonthLabel(m.Month)</td><td class="r">@m.Headcount</td><td class="r">@Fmt.Money(m.Addition)</td><td class="r">@Fmt.Money(m.Deduction)</td><td class="r"><b>@Fmt.Money(m.Net)</b></td></tr>
+                        }
+                    </tbody>
+                </table>
+            </article>
+        </section>
+    }
+</State>
+
+@code {
+    static readonly string[] Colors = ["#4f46e5", "#f97316", "#0d9488", "#8b5cf6", "#e11d48", "#0891b2", "#c026d3"];
+
+    Dashboard? d;
+    bool loading = true;
+    string? error;
+
+    string FirstName => Fmt.Title((Auth.User?.FullName ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "there");
+
+    static string Greeting
+    {
+        get
+        {
+            var h = DateTime.Now.Hour;
+            if (h >= 17) return "Good evening";
+            return h >= 12 ? "Good afternoon" : "Good morning";
+        }
+    }
+
+    int WorkingPct => d is null || d.Kpis.Active == 0 ? 0 : (int)Math.Round(100.0 * (d.Kpis.Active - d.Kpis.OnLeaveToday) / d.Kpis.Active);
+
+    int Max => Math.Max(1, d?.LeaveWeek.Max(x => Math.Max(x.Annual, Math.Max(x.Unpaid, x.Other))) ?? 1);
+    int Pct(int v) => v == 0 ? 2 : Math.Max(6, 100 * v / Max);
+    int MonthPct(PayrollMonth m)
+    {
+        if (d is null) return 0;
+        var vals = d.Payroll.Take(6).Select(x => x.Net).ToList();
+        var min = vals.Min(); var max = vals.Max();
+        return max == min ? 70 : (int)(25 + 75 * (m.Net - min) / (max - min));
+    }
+
+    string DesignationGradient
+    {
+        get
+        {
+            if (d is null || d.Designations.Count == 0) return "#e8ecf7 0";
+            var total = d.Designations.Sum(x => x.Count);
+            double acc = 0;
+            var stops = new List<string>();
+            for (var i = 0; i < d.Designations.Count; i++)
+            {
+                var start = acc / total * 100;
+                acc += d.Designations[i].Count;
+                stops.Add(FormattableString.Invariant($"{Colors[i % Colors.Length]} {start:0.##}% {acc / total * 100:0.##}%"));
+            }
+            return string.Join(",", stops);
+        }
+    }
+
+    protected override Task OnInitializedAsync()
+    {
+        if (!Auth.HasOrgAccess) { Nav.NavigateTo(Auth.Landing, replace: true); return Task.CompletedTask; }
+        return Load();
+    }
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try { d = await Api.Dashboard(); }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+}

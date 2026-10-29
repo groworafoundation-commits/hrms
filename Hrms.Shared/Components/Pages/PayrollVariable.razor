@@ -1,0 +1,122 @@
+@page "/payroll/variable"
+@inject AuthState Auth
+@inject HrmsClient Api
+
+<PageTitle>Variable salary</PageTitle>
+
+<section class="greeting"><div><h1>Payroll</h1><p>Variable additions and deductions fed into monthly salary: commission, leave salary, bills, fines, awards and more.</p></div>
+    <div class="page-actions">@if (Auth.CanAdd(AuthState.Variable)) { <button type="button" class="btn primary" @onclick="() => showForm = true"><Icon Name="plus" Size="16" /> Add entry</button> }</div></section>
+<PayrollNav />
+
+<section class="card toolbar">
+    <label class="search flat"><Icon Name="search" Size="18" /><input type="text" placeholder="Search employee" @bind="query" @bind:event="oninput" @bind:after="Debounced" /></label>
+    <select class="sel" @bind="range" @bind:after="Load">
+        <option value="12">Last 12 months</option>
+        <option value="year">This year</option>
+        <option value="all">All time</option>
+    </select>
+</section>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    @if (report is not null)
+    {
+        <TypeCards Items="report.Summary" Selected="type" OnSelect="PickType" />
+        <section class="card">
+            <div class="scroll-x">
+            <table class="tbl">
+                <thead><tr><th>Date</th><th>Employee</th><th>Type</th><th class="r">Amount</th><th class="hide-sm">Reference</th><th class="hide-sm">Remarks</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var e in report.Rows)
+                    {
+                        <tr>
+                            <td>@Fmt.Date(e.Date)</td>
+                            <td><strong>@Fmt.Title(e.Name ?? e.EmpCode)</strong><small>@e.EmpCode</small></td>
+                            <td>@e.TypeName</td>
+                            <td class="r">@Fmt.Money2(e.Amount)</td>
+                            <td class="hide-sm">@e.TransNo</td>
+                            <td class="hide-sm clip">@e.Remarks</td>
+                            <td class="r"><div class="row-actions">
+                                @if (Auth.CanEdit(AuthState.Variable)) { <button type="button" class="btn ghost sm" @onclick="() => { editing = e; showForm = true; }">Edit</button> }
+                                @if (Auth.CanDelete(AuthState.Variable)) { <button type="button" class="btn ghost sm" @onclick="() => { deleting = e; deleteError = null; }">Delete</button> }
+                            </div></td>
+                        </tr>
+                    }
+                    @if (report.Rows.Count == 0) { <tr><td colspan="7" class="empty-row">No variable salary entries for these filters.</td></tr> }
+                </tbody>
+            </table>
+            </div>
+            <p class="muted note">Showing up to 500 most recent entries.</p>
+        </section>
+    }
+</State>
+
+@if (showForm)
+{
+    <Modal Title="@(editing is null ? "Add variable salary" : "Edit variable salary")" OnClose="CloseForm">
+        <VariableForm Existing="editing" OnSaved="Saved" OnCancel="CloseForm" />
+    </Modal>
+}
+@if (deleting is not null)
+{
+    <ConfirmModal Title="Delete entry" Message="@($"Delete the {deleting.TypeName.ToLower()} of {Fmt.Money2(deleting.Amount)} for {Fmt.Title(deleting.Name ?? deleting.EmpCode)}?")" Busy="deleteBusy" Error="deleteError" OnConfirm="ConfirmDelete" OnCancel="() => deleting = null" />
+}
+@if (toast is not null) { <div class="toast">@toast</div> }
+
+@code {
+    [Inject] NavigationManager Nav { get; set; } = default!;
+    EntryReport? report;
+    bool showForm, deleteBusy;
+    EntryRow? editing, deleting;
+    string? deleteError;
+
+    string? toast;
+    async Task Toast(string message) { toast = message; StateHasChanged(); await Task.Delay(3500); toast = null; StateHasChanged(); }
+
+    void CloseForm() { showForm = false; editing = null; }
+    async Task Saved() { CloseForm(); await Load(); _ = Toast("Entry saved"); }
+
+    async Task ConfirmDelete()
+    {
+        deleteBusy = true; deleteError = null;
+        var r = await Api.DeleteVariable(deleting!.Id);
+        deleteBusy = false;
+        if (!r.Ok) { deleteError = r.Error; return; }
+        deleting = null;
+        await Load();
+        _ = Toast("Entry deleted");
+    }
+
+    string query = "", range = "12";
+    string? type, error;
+    bool loading = true;
+    CancellationTokenSource? debounce;
+
+    protected override Task OnInitializedAsync()
+    {
+        if (Nav.Uri.Contains("add=1", StringComparison.OrdinalIgnoreCase)) showForm = true;
+        return Load();
+    }
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        var (from, to) = range switch
+        {
+            "year" => (new DateTime(DateTime.Today.Year, 1, 1), new DateTime(DateTime.Today.Year, 12, 31)),
+            "all" => (new DateTime(2019, 1, 1), DateTime.Today.AddYears(1)),
+            _ => (DateTime.Today.AddMonths(-12), DateTime.Today.AddMonths(1)),
+        };
+        try { report = await Api.Entries("variable", type, null, query, from, to); }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+
+    async Task PickType(string? t) { type = t; await Load(); }
+
+    async Task Debounced()
+    {
+        debounce?.Cancel(); debounce = new CancellationTokenSource();
+        try { await Task.Delay(300, debounce.Token); } catch (TaskCanceledException) { return; }
+        await Load();
+    }
+}

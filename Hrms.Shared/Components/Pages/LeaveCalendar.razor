@@ -1,0 +1,354 @@
+@page "/payroll/leave/calendar"
+@inject AuthState Auth
+@page "/leave/calendar"
+@inject HrmsClient Api
+@inject NavigationManager Nav
+
+<PageTitle>Leave calendar</PageTitle>
+
+<section class="greeting">
+    <div><h1>Leave calendar</h1><p>Everyone's leave in one place. Click a day or a leave to open it, or drag across a row in Timeline to add leave.</p></div>
+    <div class="page-actions">
+        <a class="btn ghost" href="@(InPayroll ? "payroll/leave" : "leave")">List view</a>
+        @if (Auth.CanAdd(AuthState.Leave)) { <button type="button" class="btn primary" @onclick="() => OpenAdd(null, null, null)"><Icon Name="plus" Size="16" /> Add leave</button> }
+    </div>
+</section>
+
+@if (InPayroll) { <PayrollNav /> }
+
+<section class="cal-stats">
+    <article class="card kpi"><span class="kpi-icon tone-violet"><Icon Name="medical" Size="24" /></span><div class="kpi-body"><small>On leave today</small><strong>@todayCount</strong></div></article>
+    <article class="card kpi"><span class="kpi-icon tone-blue"><Icon Name="users" Size="24" /></span><div class="kpi-body"><small>People on leave in @month.ToString("MMMM", Inv)</small><strong>@MonthPeople</strong></div></article>
+    <article class="card kpi"><span class="kpi-icon tone-orange"><Icon Name="calendar" Size="24" /></span><div class="kpi-body"><small>Leave days in @month.ToString("MMMM", Inv)</small><strong>@MonthDays.ToString("0.#")</strong></div></article>
+    <article class="card kpi"><span class="kpi-icon tone-red"><Icon Name="trend-up" Size="24" /></span><div class="kpi-body"><small>Busiest day</small><strong>@(Peak.Count == 0 ? "-" : Peak.Count + " away")</strong><span class="kpi-note link">@(Peak.Count == 0 ? "" : Peak.Day.ToString("ddd d MMM", Inv))</span></div></article>
+</section>
+
+<section class="card cal-bar">
+    <div class="cal-nav">
+        <button type="button" class="icon-btn sm bordered" aria-label="Previous month" @onclick="() => Move(-1)"><Icon Name="chevron-right" Size="16" /></button>
+        <button type="button" class="icon-btn sm bordered next" aria-label="Next month" @onclick="() => Move(1)"><Icon Name="chevron-right" Size="16" /></button>
+        <h2>@month.ToString("MMMM yyyy", Inv)</h2>
+        <button type="button" class="btn ghost sm" @onclick="GoToday">Today</button>
+        <select class="sel small" value="@month.Month" @onchange="MonthPicked">
+            @for (var m = 1; m <= 12; m++) { <option value="@m">@System.Globalization.CultureInfo.InvariantCulture.DateTimeFormat.GetMonthName(m)</option> }
+        </select>
+        <select class="sel small" value="@month.Year" @onchange="YearPicked">
+            @for (var y = DateTime.Today.Year - 4; y <= DateTime.Today.Year + 2; y++) { <option value="@y">@y</option> }
+        </select>
+    </div>
+    <div class="seg">
+        <button type="button" class="@(view == "month" ? "on" : "")" @onclick='() => view = "month"'>Month</button>
+        <button type="button" class="@(view == "timeline" ? "on" : "")" @onclick='() => view = "timeline"'>Timeline</button>
+    </div>
+    <label class="search flat"><Icon Name="search" Size="18" /><input type="text" placeholder="Find an employee" @bind="query" @bind:event="oninput" /></label>
+    <select class="sel" @bind="designation">
+        <option value="">All designations</option>
+        @foreach (var d in designations) { <option value="@d.Code">@d.Name</option> }
+    </select>
+    @if (view == "timeline")
+    {
+        <label class="check-inline tl-only"><input type="checkbox" @bind="onlyLeave" /> Only people on leave</label>
+    }
+</section>
+
+<div class="cal-legend">
+    @foreach (var t in Types)
+    {
+        <button type="button" class="legend-chip @t.Css @(hidden.Contains(t.Code) ? "off" : "")" @onclick="() => ToggleType(t.Code)">
+            <i></i>@t.Name <b>@CountOf(t.Code)</b>
+        </button>
+    }
+</div>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    <div class="cal-layout @(selected is not null ? "with-panel" : "")">
+        <div class="cal-main">
+            @if (view == "month")
+            {
+                <div class="cal-grid">
+                    @foreach (var dow in new[] { "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" }) { <div class="cal-dow @(dow is "Sat" or "Sun" ? "wk" : "")">@dow</div> }
+                    @foreach (var day in GridDays)
+                    {
+                        var list = LeavesOn(day);
+                        <div class="cal-cell @(day.Month != month.Month ? "other" : "") @(IsWeekend(day) ? "wk" : "") @(day.Date == DateTime.Today ? "today" : "") @(selected == day ? "sel" : "")"
+                             style="--heat:@Heat(list.Count)" @onclick="() => SelectDay(day)">
+                            <div class="cal-day"><span>@day.Day</span>@if (list.Count > 0) { <em>@list.Count</em> }</div>
+                            @foreach (var l in list.Take(3))
+                            {
+                                <button type="button" class="chip @CssOf(l.LeaveType)" title="@Fmt.Title(l.Name) - @l.LeaveName, @Fmt.Range(l.FromDate, l.ToDate)"
+                                        @onclick="() => OpenDetail(l)" @onclick:stopPropagation="true">@ShortName(l.Name)</button>
+                            }
+                            @if (list.Count > 3) { <span class="more">+@(list.Count - 3) more</span> }
+                        </div>
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="tl-scroll" @onmouseleave="CancelDrag">
+                    <div class="tl" style="--n:@DaysInMonth">
+                        <div class="tl-head">
+                            <div class="tl-name head">Employee <small>@TimelinePeople.Count</small></div>
+                            <div class="tl-days">
+                                @for (var d = 1; d <= DaysInMonth; d++)
+                                {
+                                    var date = new DateTime(month.Year, month.Month, d);
+                                    <div class="tl-d @(IsWeekend(date) ? "wk" : "") @(date == DateTime.Today ? "today" : "")"><small>@date.ToString("ddd", Inv).Substring(0, 1)</small><b>@d</b></div>
+                                }
+                            </div>
+                        </div>
+                        @foreach (var p in TimelinePeople)
+                        {
+                            var mine = LeavesOfPerson(p.Code);
+                            <div class="tl-row">
+                                <div class="tl-name"><Avatar Name="@p.Name" Size="26" /><div><strong>@Fmt.Title(p.Name)</strong><small>@p.Designation</small></div></div>
+                                <div class="tl-cells">
+                                    @for (var d = 1; d <= DaysInMonth; d++)
+                                    {
+                                        var dd = d;
+                                        var date = new DateTime(month.Year, month.Month, d);
+                                        <div class="tl-c @(IsWeekend(date) ? "wk" : "") @(date == DateTime.Today ? "today" : "") @(InDrag(p.Code, dd) ? "drag" : "")" style="grid-column:@d"
+                                             @onmousedown="() => DragStart(p.Code, dd)" @onmouseenter="() => DragOver(p.Code, dd)" @onmouseup="() => DragEnd(p.Code, dd)"></div>
+                                    }
+                                    @foreach (var l in mine)
+                                    {
+                                        var s = Math.Max(1, (l.FromDate.Date < month ? 1 : l.FromDate.Day));
+                                        var e = Math.Min(DaysInMonth, (l.ToDate.Date > MonthEnd ? DaysInMonth : l.ToDate.Day));
+                                        <button type="button" class="bar @CssOf(l.LeaveType)" style="grid-column:@s / span @(e - s + 1)" title="@Fmt.Title(l.Name) - @l.LeaveName, @Fmt.Range(l.FromDate, l.ToDate)" @onclick="() => OpenDetail(l)">
+                                            @(e - s + 1 >= 3 ? l.LeaveName : "")
+                                        </button>
+                                    }
+                                </div>
+                            </div>
+                        }
+                        @if (TimelinePeople.Count == 0) { <p class="empty-row">No employees match these filters.</p> }
+                    </div>
+                </div>
+            }
+        </div>
+
+        @if (selected is not null)
+        {
+            var dayList = LeavesOn(selected.Value);
+            <aside class="day-panel">
+                <header>
+                    <div><strong>@selected.Value.ToString("dddd", Inv)</strong><span>@selected.Value.ToString("d MMMM yyyy", Inv)</span></div>
+                    <button type="button" class="icon-btn sm" aria-label="Close" @onclick="() => selected = null"><Icon Name="x" Size="18" /></button>
+                </header>
+                <p class="muted">@dayList.Count @(dayList.Count == 1 ? "person" : "people") on leave@(IsWeekend(selected.Value) ? " (weekend)" : "")</p>
+                <ul class="list">
+                    @foreach (var l in dayList)
+                    {
+                        <li class="day-item @CssOf(l.LeaveType)" @onclick="() => OpenDetail(l)">
+                            <Avatar Name="@l.Name" Size="34" />
+                            <div class="grow"><strong>@Fmt.Title(l.Name)</strong><small>@l.LeaveName | @Fmt.Range(l.FromDate, l.ToDate)</small></div>
+                            <span class="dot"></span>
+                        </li>
+                    }
+                    @if (dayList.Count == 0) { <li class="muted">Nobody is on leave this day.</li> }
+                </ul>
+                @if (Auth.CanAdd(AuthState.Leave)) { <button type="button" class="btn primary wide" @onclick="() => OpenAdd(null, selected, selected)"><Icon Name="plus" Size="16" /> Add leave on this day</button> }
+            </aside>
+        }
+    </div>
+</State>
+
+@if (detail is not null)
+{
+    <Modal Title="Leave details" Size="sm" OnClose="() => detail = null">
+        <div class="leave-card @CssOf(detail.LeaveType)">
+            <div class="lc-head"><Avatar Name="@detail.Name" Size="44" /><div><strong>@Fmt.Title(detail.Name)</strong><small>@detail.EmpCode</small></div><StatusBadge Status="@detail.Status" /></div>
+            <dl class="facts2">
+                <div><dt>Type</dt><dd><span class="type-pill @CssOf(detail.LeaveType)"><i></i>@detail.LeaveName</span></dd></div>
+                <div><dt>Days</dt><dd>@detail.Days.ToString("0.#")</dd></div>
+                <div><dt>From</dt><dd>@Fmt.Date(detail.FromDate)</dd></div>
+                <div><dt>To</dt><dd>@Fmt.Date(detail.ToDate)</dd></div>
+                <div><dt>Rejoining</dt><dd>@Fmt.Date(detail.Rejoining)</dd></div>
+                <div><dt>Applied on</dt><dd>@Fmt.Date(detail.Applied)</dd></div>
+                <div class="full"><dt>Reference</dt><dd>@(detail.TransNo ?? "-")</dd></div>
+            </dl>
+            <div class="form-actions spread">
+                <a class="btn ghost" href="employees/@detail.EmpCode">Open employee</a>
+                <span>
+                    @if (Auth.CanDelete(AuthState.Leave)) { <button type="button" class="btn ghost" @onclick="() => { deleting = detail; deleteError = null; detail = null; }">Delete</button> }
+                    @if (Auth.CanEdit(AuthState.Leave)) { <button type="button" class="btn primary" @onclick="() => { editing = detail; detail = null; showForm = true; }">Edit</button> }
+                </span>
+            </div>
+        </div>
+    </Modal>
+}
+
+@if (showForm)
+{
+    <Modal Title="@(editing is null ? "Add leave" : "Edit leave")" OnClose="CloseForm">
+        <LeaveForm Existing="editing" FixedEmp="@addEmp" InitialFrom="addFrom" InitialTo="addTo" OnSaved="Saved" OnCancel="CloseForm" />
+    </Modal>
+}
+
+@if (deleting is not null)
+{
+    <ConfirmModal Title="Delete leave" Message="@($"Delete {deleting.LeaveName} for {Fmt.Title(deleting.Name)} ({Fmt.Range(deleting.FromDate, deleting.ToDate)})?")" Busy="deleteBusy" Error="deleteError" OnConfirm="ConfirmDelete" OnCancel="() => deleting = null" />
+}
+
+@if (toast is not null) { <div class="toast">@toast</div> }
+
+@code {
+    static readonly System.Globalization.CultureInfo Inv = System.Globalization.CultureInfo.InvariantCulture;
+    static readonly (string Code, string Name, string Css)[] Types =
+    [
+        ("LVE", "Annual leave", "lt-lve"), ("ALVESAL", "Annual leave with salary", "lt-als"), ("UPL", "Unpaid leave", "lt-upl"),
+        ("EMRLVE", "Emergency leave", "lt-emr"), ("MTRLVE", "Maternity leave", "lt-mtr"),
+    ];
+
+    record Person(string Code, string Name, string? Designation);
+    record PeakDay(int Count, DateTime Day);
+
+    DateTime month = new(DateTime.Today.Year, DateTime.Today.Month, 1);
+    string view = "month", query = "", designation = "";
+    bool onlyLeave = true, loading = true, showForm, deleteBusy;
+    string? error, toast, deleteError, addEmp;
+    DateTime? selected, addFrom, addTo;
+    int todayCount;
+
+    List<LeaveRow> leaves = [];
+    List<Person> people = [];
+    List<ReportOption> designations = [];
+    readonly HashSet<string> hidden = [];
+    LeaveRow? detail, editing, deleting;
+
+    // timeline drag-to-create state
+    string? dragEmp; int dragFrom, dragTo; bool dragging;
+
+    bool InPayroll => Nav.Uri.Contains("/payroll/", StringComparison.OrdinalIgnoreCase);
+    int DaysInMonth => DateTime.DaysInMonth(month.Year, month.Month);
+    DateTime MonthEnd => new(month.Year, month.Month, DaysInMonth);
+
+    DateTime GridStart { get { var d = month; while (d.DayOfWeek != DayOfWeek.Monday) d = d.AddDays(-1); return d; } }
+    IEnumerable<DateTime> GridDays => Enumerable.Range(0, 42).Select(i => GridStart.AddDays(i));
+
+    static bool IsWeekend(DateTime d) => d.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
+    static string CssOf(string type) => Types.FirstOrDefault(t => t.Code == type).Css ?? "lt-lve";
+    static string ShortName(string full)
+    {
+        var parts = Fmt.Title(full).Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length < 2 ? full : parts[0] + " " + parts[^1][0] + ".";
+    }
+
+    double Heat(int n) => n == 0 ? 0 : Math.Min(0.55, 0.12 + n * 0.1);
+    int CountOf(string type) => leaves.Count(l => l.LeaveType == type && l.ToDate >= month && l.FromDate <= MonthEnd);
+
+    IEnumerable<LeaveRow> Visible => leaves.Where(l => !hidden.Contains(l.LeaveType)
+        && (string.IsNullOrWhiteSpace(query) || (l.Name ?? "").Contains(query, StringComparison.OrdinalIgnoreCase) || l.EmpCode.Contains(query, StringComparison.OrdinalIgnoreCase))
+        && (string.IsNullOrEmpty(designation) || DesignationOf(l.EmpCode) == designation));
+
+    string? DesignationOf(string code) => people.FirstOrDefault(p => p.Code == code)?.Designation;
+    List<LeaveRow> LeavesOn(DateTime day) => Visible.Where(l => l.FromDate.Date <= day.Date && l.ToDate.Date >= day.Date).OrderBy(l => l.Name).ToList();
+    List<LeaveRow> LeavesOfPerson(string code) => Visible.Where(l => l.EmpCode == code && l.ToDate >= month && l.FromDate <= MonthEnd).ToList();
+
+    List<Person> TimelinePeople
+    {
+        get
+        {
+            var withLeave = Visible.Where(l => l.ToDate >= month && l.FromDate <= MonthEnd).Select(l => l.EmpCode).ToHashSet();
+            var all = people.Concat(leaves.Where(l => people.All(p => p.Code != l.EmpCode)).Select(l => new Person(l.EmpCode, l.Name ?? l.EmpCode, null)).DistinctBy(p => p.Code));
+            return all
+                .Where(p => (!onlyLeave || withLeave.Contains(p.Code))
+                    && (string.IsNullOrWhiteSpace(query) || p.Name.Contains(query, StringComparison.OrdinalIgnoreCase) || p.Code.Contains(query, StringComparison.OrdinalIgnoreCase))
+                    && (string.IsNullOrEmpty(designation) || p.Designation == designation))
+                .OrderBy(p => p.Name).ToList();
+        }
+    }
+
+    int MonthPeople => Visible.Where(l => l.ToDate >= month && l.FromDate <= MonthEnd).Select(l => l.EmpCode).Distinct().Count();
+
+    decimal MonthDays => Visible.Where(l => l.ToDate >= month && l.FromDate <= MonthEnd)
+        .Sum(l => (decimal)((l.ToDate.Date > MonthEnd ? MonthEnd : l.ToDate.Date) - (l.FromDate.Date < month ? month : l.FromDate.Date)).TotalDays + 1);
+
+    PeakDay Peak
+    {
+        get
+        {
+            var best = new PeakDay(0, month);
+            for (var d = 1; d <= DaysInMonth; d++)
+            {
+                var day = new DateTime(month.Year, month.Month, d);
+                var n = Visible.Count(l => l.FromDate.Date <= day && l.ToDate.Date >= day);
+                if (n > best.Count) best = new PeakDay(n, day);
+            }
+            return best;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var lookups = await Api.ReportLookups();
+            designations = lookups?.Designations ?? [];
+            people = (await Api.EmployeeOptions()).Select(e => new Person(e.EmpCode, e.Name, e.Designation)).ToList();
+            todayCount = (await Api.Leave(null, DateTime.Today, DateTime.Today, null))?.Select(l => l.EmpCode).Distinct().Count() ?? 0;
+        }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        await Load();
+    }
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try { leaves = await Api.Leave(null, GridStart, GridStart.AddDays(41), null) ?? []; }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+
+    Task Move(int delta) { month = month.AddMonths(delta); selected = null; return Load(); }
+    Task GoToday() { month = new(DateTime.Today.Year, DateTime.Today.Month, 1); selected = DateTime.Today; return Load(); }
+    Task MonthPicked(ChangeEventArgs e) { month = new(month.Year, int.Parse(e.Value!.ToString()!), 1); selected = null; return Load(); }
+    Task YearPicked(ChangeEventArgs e) { month = new(int.Parse(e.Value!.ToString()!), month.Month, 1); selected = null; return Load(); }
+
+    void ToggleType(string code) { if (!hidden.Remove(code)) hidden.Add(code); }
+    void SelectDay(DateTime day) => selected = selected == day ? null : day;
+
+    void OpenDetail(LeaveRow l) => detail = l;
+
+    void OpenAdd(string? emp, DateTime? from, DateTime? to)
+    {
+        if (!Auth.CanAdd(AuthState.Leave)) return;
+        editing = null; addEmp = emp; addFrom = from; addTo = to; showForm = true;
+    }
+
+    void CloseForm() { showForm = false; editing = null; addEmp = null; addFrom = addTo = null; }
+
+    async Task Saved()
+    {
+        CloseForm();
+        await Load();
+        _ = Toast("Leave saved");
+    }
+
+    async Task ConfirmDelete()
+    {
+        deleteBusy = true; deleteError = null;
+        var r = await Api.DeleteLeave(deleting!.Id);
+        deleteBusy = false;
+        if (!r.Ok) { deleteError = r.Error; return; }
+        deleting = null;
+        await Load();
+        _ = Toast("Leave deleted");
+    }
+
+    // ----- timeline: drag across a row to add leave -----
+    void DragStart(string code, int day) { dragging = true; dragEmp = code; dragFrom = dragTo = day; }
+    void DragOver(string code, int day) { if (dragging && dragEmp == code) dragTo = day; }
+    void CancelDrag() { dragging = false; dragEmp = null; }
+    bool InDrag(string code, int day) => dragging && dragEmp == code && day >= Math.Min(dragFrom, dragTo) && day <= Math.Max(dragFrom, dragTo);
+
+    void DragEnd(string code, int day)
+    {
+        if (!dragging || dragEmp != code) { CancelDrag(); return; }
+        var a = Math.Min(dragFrom, day); var b = Math.Max(dragFrom, day);
+        CancelDrag();
+        OpenAdd(code, new DateTime(month.Year, month.Month, a), new DateTime(month.Year, month.Month, b));
+    }
+
+    async Task Toast(string message) { toast = message; StateHasChanged(); await Task.Delay(3500); toast = null; StateHasChanged(); }
+}

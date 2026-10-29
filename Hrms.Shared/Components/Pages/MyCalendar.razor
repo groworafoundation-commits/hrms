@@ -1,0 +1,83 @@
+@page "/my/calendar"
+@inject PortalClient Portal
+@inject AuthState Auth
+
+<PageTitle>My calendar</PageTitle>
+
+<section class="greeting">
+    <div><h1>My calendar</h1><p>Your approved and pending leave. Click a day to request leave.</p></div>
+    <div class="page-actions">
+        @if (Auth.CanAdd("H102")) { <button type="button" class="btn primary" @onclick="() => Open(null)"><Icon Name="plus" Size="16" /> Request leave</button> }
+    </div>
+</section>
+
+<section class="card toolbar cal-bar">
+    <div class="cal-nav">
+        <button type="button" class="icon-btn sm bordered" aria-label="Previous month" @onclick="() => Move(-1)"><Icon Name="chevron-right" Size="16" /></button>
+        <button type="button" class="icon-btn sm bordered next" aria-label="Next month" @onclick="() => Move(1)"><Icon Name="chevron-right" Size="16" /></button>
+        <h2>@month.ToString("MMMM yyyy")</h2>
+    </div>
+    <button type="button" class="btn ghost sm" @onclick="GoToday">Today</button>
+</section>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    <div class="cal-grid">
+        @foreach (var dow in new[] { "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" }) { <div class="cal-dow @(dow is "Sat" or "Sun" ? "wk" : "")">@dow</div> }
+        @foreach (var day in GridDays)
+        {
+            var list = On(day);
+            <div class="cal-cell @(day.Month != month.Month ? "other" : "") @(day.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday ? "wk" : "") @(day.Date == DateTime.Today ? "today" : "")" @onclick="() => Open(day)">
+                <div class="cal-day"><span>@day.Day</span></div>
+                @foreach (var l in list)
+                {
+                    <span class="chip @CssOf(l.LeaveType)" title="@l.LeaveName, @Fmt.Range(l.FromDate, l.ToDate) (@l.Status)">@l.LeaveName@(l.Status == "Pending" ? " (pending)" : "")</span>
+                }
+            </div>
+        }
+    </div>
+</State>
+
+@if (showForm)
+{
+    <Modal Title="Request leave" OnClose="() => showForm = false">
+        <LeaveRequestForm InitialFrom="addFrom" OnSaved="Saved" OnCancel="() => showForm = false" />
+    </Modal>
+}
+@if (toast is not null) { <div class="toast">@toast</div> }
+
+@code {
+    DateTime month = new(DateTime.Today.Year, DateTime.Today.Month, 1);
+    List<LeaveRow> rows = [];
+    bool loading = true, showForm;
+    string? error, toast;
+    DateTime? addFrom;
+
+    static readonly Dictionary<string, string> Css = new() { ["LVE"] = "lt-lve", ["ALVESAL"] = "lt-als", ["UPL"] = "lt-upl", ["EMRLVE"] = "lt-emr", ["MTRLVE"] = "lt-mtr" };
+    static string CssOf(string type) => Css.TryGetValue(type, out var c) ? c : "lt-lve";
+
+    DateTime GridStart { get { var d = month; while (d.DayOfWeek != DayOfWeek.Monday) d = d.AddDays(-1); return d; } }
+    IEnumerable<DateTime> GridDays { get { var s = GridStart; var weeks = (int)Math.Ceiling(((month.AddMonths(1) - s).TotalDays) / 7); for (var i = 0; i < weeks * 7; i++) yield return s.AddDays(i); } }
+    List<LeaveRow> On(DateTime day) => rows.Where(l => l.FromDate.Date <= day.Date && l.ToDate.Date >= day.Date).ToList();
+
+    protected override Task OnInitializedAsync() => Load();
+
+    async Task Move(int by) { month = month.AddMonths(by); await Load(); }
+    async Task GoToday() { month = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1); await Load(); }
+
+    void Open(DateTime? day)
+    {
+        if (!Auth.CanAdd("H102")) return;
+        addFrom = day is not null && day.Value.Date > DateTime.Today ? day : DateTime.Today.AddDays(1);
+        showForm = true;
+    }
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try { rows = await Portal.MyLeave(GridStart, GridStart.AddDays(42)) ?? []; }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+
+    async Task Saved() { showForm = false; await Load(); toast = "Leave request sent for approval"; StateHasChanged(); await Task.Delay(3500); toast = null; StateHasChanged(); }
+}

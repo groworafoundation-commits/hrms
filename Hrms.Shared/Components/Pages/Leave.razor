@@ -1,0 +1,159 @@
+@page "/leave"
+@inject AuthState Auth
+@page "/payroll/leave"
+@inject HrmsClient Api
+
+<PageTitle>Leave</PageTitle>
+
+<section class="greeting">
+    <div><h1>Leave management</h1><p>@(rows?.Count ?? 0) records from @Fmt.Date(from) to @Fmt.Date(to)</p></div>
+    <div class="page-actions"><a class="btn ghost" href="@(InPayroll ? "payroll/leave/balances" : "leave/balances")">Balances</a><a class="btn ghost" href="@(InPayroll ? "payroll/leave/calendar" : "leave/calendar")">Calendar view</a>@if (Auth.CanAdd(AuthState.Leave)) { <button type="button" class="btn primary" @onclick="() => showForm = true"><Icon Name="plus" Size="16" /> Add leave</button> }</div>
+</section>
+
+@if (InPayroll) { <PayrollNav /> }
+
+@if (summary.Count > 0)
+{
+    <div class="typecards">
+        @foreach (var s in summary)
+        {
+            <div class="typecard static"><small>@s.TypeName</small><strong>@s.Days.ToString("0.#") days</strong><span>@s.Records records | @s.Employees employees</span></div>
+        }
+    </div>
+}
+
+<section class="card toolbar">
+    <label class="search flat">
+        <Icon Name="search" Size="18" />
+        <input type="text" placeholder="Search employee" @bind="query" @bind:event="oninput" @bind:after="Debounced" />
+    </label>
+    <select class="sel" @bind="type" @bind:after="Load">
+        <option value="">All leave types</option>
+        <option value="LVE">Annual leave</option>
+        <option value="ALVESAL">Annual leave with salary</option>
+        <option value="UPL">Unpaid leave</option>
+        <option value="EMRLVE">Emergency leave</option>
+        <option value="MTRLVE">Maternity leave</option>
+    </select>
+    <select class="sel" @bind="range" @bind:after="RangeChanged">
+        <option value="current">Last 30 days to next 60</option>
+        <option value="year">This year</option>
+        <option value="all">Last 2 years</option>
+    </select>
+</section>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    @if (rows is not null)
+    {
+        <section class="card">
+            <table class="tbl rows">
+                <thead><tr><th>Employee</th><th>Leave type</th><th>Dates</th><th class="r">Days</th><th class="hide-sm">Applied</th><th>Status</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var l in rows)
+                    {
+                        <tr>
+                            <td><div class="who"><Avatar Name="@l.Name" Size="34" /><div><strong>@Fmt.Title(l.Name)</strong><small>@l.EmpCode</small></div></div></td>
+                            <td>@l.LeaveName</td>
+                            <td>@Fmt.Range(l.FromDate, l.ToDate)</td>
+                            <td class="r">@l.Days.ToString("0.#")</td>
+                            <td class="hide-sm">@Fmt.Date(l.Applied)</td>
+                            <td><StatusBadge Status="@l.Status" /></td>
+                            <td class="r"><div class="row-actions">
+                                @if (Auth.CanEdit(AuthState.Leave)) { <button type="button" class="btn ghost sm" @onclick="() => { editing = l; showForm = true; }">Edit</button> }
+                                @if (Auth.CanDelete(AuthState.Leave)) { <button type="button" class="btn ghost sm" @onclick="() => { deleting = l; deleteError = null; }">Delete</button> }
+                            </div></td>
+                        </tr>
+                    }
+                    @if (rows.Count == 0) { <tr><td colspan="7" class="empty-row">No leave found for these filters.</td></tr> }
+                </tbody>
+            </table>
+        </section>
+    }
+</State>
+
+@if (showForm)
+{
+    <Modal Title="@(editing is null ? "Add leave" : "Edit leave")" OnClose="CloseForm">
+        <LeaveForm Existing="editing" OnSaved="Saved" OnCancel="CloseForm" />
+    </Modal>
+}
+@if (deleting is not null)
+{
+    <ConfirmModal Title="Delete leave" Message="@($"Delete {deleting.LeaveName} for {Fmt.Title(deleting.Name)} ({Fmt.Range(deleting.FromDate, deleting.ToDate)})?")" Busy="deleteBusy" Error="deleteError" OnConfirm="ConfirmDelete" OnCancel="() => deleting = null" />
+}
+@if (toast is not null) { <div class="toast">@toast</div> }
+
+@code {
+    [Inject] NavigationManager Nav { get; set; } = default!;
+    bool InPayroll => Nav.Uri.Contains("/payroll/", StringComparison.OrdinalIgnoreCase);
+    List<LeaveSummaryRow> summary = [];
+    bool showForm, deleteBusy;
+    LeaveRow? editing, deleting;
+    string? deleteError;
+
+    string? toast;
+    async Task Toast(string message) { toast = message; StateHasChanged(); await Task.Delay(3500); toast = null; StateHasChanged(); }
+
+    void CloseForm() { showForm = false; editing = null; }
+
+    async Task Saved()
+    {
+        CloseForm();
+        try { summary = await Api.LeaveSummary(DateTime.Today.Year) ?? []; } catch { }
+        await Load();
+        _ = Toast("Leave saved");
+    }
+
+    async Task ConfirmDelete()
+    {
+        deleteBusy = true; deleteError = null;
+        var r = await Api.DeleteLeave(deleting!.Id);
+        deleteBusy = false;
+        if (!r.Ok) { deleteError = r.Error; return; }
+        deleting = null;
+        try { summary = await Api.LeaveSummary(DateTime.Today.Year) ?? []; } catch { }
+        await Load();
+        _ = Toast("Leave deleted");
+    }
+
+    List<LeaveRow>? rows;
+    string query = "", type = "", range = "current";
+    DateTime from = DateTime.Today.AddDays(-30), to = DateTime.Today.AddDays(60);
+    bool loading = true;
+    string? error;
+    CancellationTokenSource? debounce;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Nav.Uri.Contains("add=1", StringComparison.OrdinalIgnoreCase)) showForm = true;
+        try { summary = await Api.LeaveSummary(DateTime.Today.Year) ?? []; } catch { }
+        await Load();
+    }
+
+    async Task RangeChanged()
+    {
+        (from, to) = range switch
+        {
+            "year" => (new DateTime(DateTime.Today.Year, 1, 1), new DateTime(DateTime.Today.Year, 12, 31)),
+            "all" => (DateTime.Today.AddYears(-2), DateTime.Today.AddYears(1)),
+            _ => (DateTime.Today.AddDays(-30), DateTime.Today.AddDays(60)),
+        };
+        await Load();
+    }
+
+    async Task Debounced()
+    {
+        debounce?.Cancel();
+        debounce = new CancellationTokenSource();
+        try { await Task.Delay(300, debounce.Token); } catch (TaskCanceledException) { return; }
+        await Load();
+    }
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try { rows = await Api.Leave(type, from, to, query); }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+}

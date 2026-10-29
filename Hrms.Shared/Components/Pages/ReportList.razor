@@ -1,0 +1,46 @@
+@page "/payroll/reports"
+@inject HrmsClient Api
+
+<PageTitle>Payroll reports</PageTitle>
+
+<section class="greeting"><div><h1>Payroll</h1><p>The ERP's Payroll Reports, rebuilt for this app. Each report opens with the same filters as the ERP.</p></div></section>
+<PayrollNav />
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    @if (reports is not null)
+    {
+        @foreach (var g in reports.GroupBy(r => r.Group))
+        {
+            <h3 class="group-title">@g.Key</h3>
+            <div class="report-grid">
+                @foreach (var r in g)
+                {
+                    <a class="report-card" href="payroll/reports/@r.Id">
+                        <span class="report-icon"><Icon Name="file" Size="22" /></span>
+                        <div>
+                            <strong>@r.Name</strong>
+                            <p>@r.Description</p>
+                            <small>ERP menu: @r.ErpMenu</small>
+                        </div>
+                    </a>
+                }
+            </div>
+        }
+    }
+</State>
+
+@code {
+    List<ReportDef>? reports;
+    bool loading = true;
+    string? error;
+
+    protected override Task OnInitializedAsync() => Load();
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try { reports = await Api.ReportList(); }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+}

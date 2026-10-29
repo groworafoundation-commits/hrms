@@ -1,0 +1,107 @@
+@page "/my/leave"
+@inject PortalClient Portal
+@inject AuthState Auth
+
+<PageTitle>My leave</PageTitle>
+
+<section class="greeting">
+    <div><h1>My leave</h1><p>Request leave and follow its approval.</p></div>
+    <div class="page-actions">
+        @if (Auth.HasMenu("H103")) { <a class="btn ghost" href="my/calendar">Calendar view</a> }
+        @if (Auth.CanAdd("H102")) { <button type="button" class="btn primary" @onclick="() => showForm = true"><Icon Name="plus" Size="16" /> Request leave</button> }
+    </div>
+</section>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    @if (me is not null)
+    {
+        @if (balance is { HasPayroll: true })
+        {
+            <div class="typecards bal">
+                <div class="typecard static hero"><small>Annual leave available</small><strong class="@(balance.Available < 0 ? "neg" : "")">@balance.Available.ToString("0.##") days</strong><span>@(balance.Available < 0 ? "taken in advance" : "ready to use")</span></div>
+                <div class="typecard static"><small>Brought forward</small><strong>@balance.BroughtForward.ToString("0.##")</strong><span>from last year</span></div>
+                <div class="typecard static"><small>Earned in @balance.Year</small><strong>@balance.Earned.ToString("0.##")</strong><span>2.5 days a month</span></div>
+                <div class="typecard static"><small>Used</small><strong>@(balance.Used + balance.Unprocessed + balance.Pending)</strong><span>@balance.Pending.ToString("0.##") waiting approval</span></div>
+            </div>
+            <p class="muted note">Balance to @(balance.AsOfMonth is null ? "" : Fmt.MonthLabel(balance.AsOfMonth)) comes from payroll. Leave taken since, and requests still waiting, are already taken off. Leave with salary is the type that uses this balance.</p>
+        }
+        <div class="typecards">
+            @foreach (var t in me.Taken)
+            {
+                <div class="typecard static"><small>@t.TypeName</small><strong>@t.Days.ToString("0.#") days</strong><span>@t.Records records in @me.Year</span></div>
+            }
+            <div class="typecard static"><small>Waiting for approval</small><strong>@me.Pending</strong><span>requests</span></div>
+        </div>
+
+        <section class="card">
+            <table class="tbl rows">
+                <thead><tr><th>Leave type</th><th>Dates</th><th class="r">Days</th><th class="hide-sm">Requested</th><th>Status</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var l in rows)
+                    {
+                        <tr>
+                            <td>@l.LeaveName</td>
+                            <td>@Fmt.Range(l.FromDate, l.ToDate)</td>
+                            <td class="r">@l.Days.ToString("0.#")</td>
+                            <td class="hide-sm">@Fmt.Date(l.Applied)</td>
+                            <td><StatusBadge Status="@l.Status" />@if (l.Status == "Pending" && !string.IsNullOrEmpty(l.HeldByName)) { <small class="muted"> with @Fmt.Title(l.HeldByName)</small> }</td>
+                            <td class="r">@if (l.Status == "Pending" && Auth.CanDelete("H102")) { <button type="button" class="btn ghost sm" @onclick="() => { cancelling = l; cancelError = null; }">Cancel request</button> }</td>
+                        </tr>
+                    }
+                    @if (rows.Count == 0) { <tr><td colspan="6" class="empty-row">No leave found.</td></tr> }
+                </tbody>
+            </table>
+        </section>
+    }
+</State>
+
+@if (showForm)
+{
+    <Modal Title="Request leave" OnClose="() => showForm = false">
+        <LeaveRequestForm OnSaved="Saved" OnCancel="() => showForm = false" />
+    </Modal>
+}
+@if (cancelling is not null)
+{
+    <ConfirmModal Title="Cancel request" ConfirmText="Cancel request" Message="@($"Cancel your {cancelling.LeaveName} request for {Fmt.Range(cancelling.FromDate, cancelling.ToDate)}?")" Busy="busy" Error="cancelError" OnConfirm="ConfirmCancel" OnCancel="() => cancelling = null" />
+}
+@if (toast is not null) { <div class="toast">@toast</div> }
+
+@code {
+    MySummary? me;
+    LeaveBalance? balance;
+    List<LeaveRow> rows = [];
+    LeaveRow? cancelling;
+    bool loading = true, showForm, busy;
+    string? error, cancelError, toast;
+
+    protected override Task OnInitializedAsync() => Load();
+
+    async Task Toast(string message) { toast = message; StateHasChanged(); await Task.Delay(3500); toast = null; StateHasChanged(); }
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try
+        {
+            me = await Portal.Me();
+            try { balance = await Portal.MyBalance(); } catch { balance = null; }
+            rows = (await Portal.MyLeave(DateTime.Today.AddYears(-2), DateTime.Today.AddYears(1)) ?? []).OrderByDescending(l => l.FromDate).ToList();
+        }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+
+    async Task Saved() { showForm = false; await Load(); _ = Toast("Leave request sent for approval"); }
+
+    async Task ConfirmCancel()
+    {
+        busy = true; cancelError = null;
+        var r = await Portal.CancelLeave(cancelling!.Id);
+        busy = false;
+        if (!r.Ok) { cancelError = r.Error; return; }
+        cancelling = null;
+        await Load();
+        _ = Toast("Request cancelled");
+    }
+}

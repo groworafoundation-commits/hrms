@@ -1,0 +1,182 @@
+@page "/payroll/reports/{Id}"
+@inject HrmsClient Api
+@inject IJSRuntime Js
+@inject IHostServices Host
+
+<PageTitle>@(def?.Name ?? "Report")</PageTitle>
+
+<section class="greeting no-print">
+    <div><h1>@(def?.Name ?? "Report")</h1><p>@def?.Description</p></div>
+    <div class="page-actions">
+        <a class="btn ghost" href="payroll/reports">All reports</a>
+        <button type="button" class="btn ghost" @onclick="Print" disabled="@(result is null)">Print</button>
+        <button type="button" class="btn ghost" @onclick="SavePdf" disabled="@(result is null || busyPdf)">@(busyPdf ? "Creating PDF..." : "Save PDF")</button>
+        <button type="button" class="btn primary" @onclick="ExportCsv" disabled="@(result is null || result.Rows.Count == 0)">Export CSV</button>
+    </div>
+</section>
+<div class="no-print"><PayrollNav /></div>
+
+@if (def is not null)
+{
+    <section class="card toolbar no-print">
+        @if (Has("month"))
+        {
+            <label class="mini-field"><span>Month</span>
+                <select class="sel" @bind="filter.Month" @bind:after="Run">
+                    @foreach (var mth in lookups?.Months ?? []) { <option value="@mth">@Fmt.MonthLabel(mth)</option> }
+                </select></label>
+        }
+        @if (Has("asOf"))
+        {
+            <label class="mini-field"><span>As of</span><input class="sel" type="date" @bind="filter.AsOf" @bind:after="Run" /></label>
+        }
+        @if (Has("employee"))
+        {
+            <label class="mini-field wide"><span>Employee</span><EmployeePick Value="@filter.Employee" ValueChanged="EmployeeChanged" /></label>
+        }
+        @if (Has("designation"))
+        {
+            <label class="mini-field"><span>Designation</span>
+                <select class="sel" @bind="filter.Designation" @bind:after="Run">
+                    <option value="">All designations</option>
+                    @foreach (var d in lookups?.Designations ?? []) { <option value="@d.Code">@d.Name</option> }
+                </select></label>
+        }
+        @if (Has("location"))
+        {
+            <label class="mini-field"><span>Location</span>
+                <select class="sel" @bind="filter.Location" @bind:after="Run">
+                    <option value="">All locations</option>
+                    @foreach (var l in lookups?.Locations ?? []) { <option value="@l">@l</option> }
+                </select></label>
+        }
+        @if (Has("status"))
+        {
+            <div class="seg">
+                @foreach (var s in new[] { "active", "inactive", "all" })
+                {
+                    <button type="button" class="@(filter.Status == s ? "on" : "")" @onclick="() => SetStatus(s)">@Fmt.Title(s)</button>
+                }
+            </div>
+        }
+        @if (Has("includeZero"))
+        {
+            <label class="check-inline"><input type="checkbox" @bind="filter.IncludeZero" @bind:after="Run" /> Include zero balances</label>
+        }
+    </section>
+}
+
+<State Loading="@loading" Error="@error" OnRetry="Run">
+    <div class="paper-wrap">
+        <ReportSheet Result="result" Company="company" Layout="layout" />
+    </div>
+</State>
+
+@if (saved is not null)
+{
+    <div class="toast no-print">
+        <span>@saved.Message</span>
+        @if (saved.Path is not null)
+        {
+            <button type="button" class="toast-btn" @onclick="OpenSaved">Open</button>
+            <button type="button" class="toast-btn" @onclick="ShowFolder">Show folder</button>
+        }
+        <button type="button" class="toast-btn" @onclick="() => saved = null">Close</button>
+    </div>
+}
+
+@code {
+    record Saved(string Message, string? Path);
+
+    [Parameter] public string Id { get; set; } = "";
+
+    ReportDef? def;
+    ReportLookups? lookups;
+    CompanyInfo? company;
+    ReportResult? result;
+    readonly ReportFilter filter = new();
+    ReportLayout layout = ReportLayouts.For("");
+    bool loading = true, busyPdf;
+    string? error;
+    Saved? saved;
+
+    bool Has(string f) => def?.Filters.Contains(f) == true;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        loading = true; error = null; result = null;
+        layout = ReportLayouts.For(Id);
+        try
+        {
+            def = (await Api.ReportList())?.FirstOrDefault(r => r.Id == Id);
+            lookups ??= await Api.ReportLookups();
+            company ??= await Api.Company();
+            filter.Month ??= lookups?.Months.FirstOrDefault();
+            if (def is null) { error = "Report not found."; loading = false; return; }
+        }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; loading = false; return; }
+        await Run();
+    }
+
+    Task EmployeeChanged(string code) { filter.Employee = string.IsNullOrEmpty(code) ? null : code; return Run(); }
+    Task SetStatus(string s) { filter.Status = s; return Run(); }
+
+    async Task Run()
+    {
+        loading = true; error = null;
+        try { result = await Api.Report(Id, filter); }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+
+    async Task Print() => await Js.InvokeVoidAsync("print");
+
+    async Task SavePdf()
+    {
+        if (result is null) return;
+        busyPdf = true; saved = null;
+        try
+        {
+            var r = await Host.SavePdf($"{Id}-{DateTime.Now:yyyyMMdd-HHmmss}.pdf", layout.Landscape, result.Title, $"{company?.Name}  |  {result.Title}");
+            saved = new Saved(r.Message, r.Ok ? r.Path : null);
+        }
+        catch (Exception ex) { saved = new Saved("Couldn't create the PDF: " + ex.Message, null); }
+        busyPdf = false;
+    }
+
+    async Task ExportCsv()
+    {
+        if (result is null) return;
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine(Fmt.Csv(result.Title + (string.IsNullOrEmpty(result.Subtitle) ? "" : " - " + result.Subtitle)));
+        sb.AppendLine(string.Join(",", result.Columns.Select(c => Fmt.Csv(c.Label))));
+        foreach (var row in result.Rows)
+            sb.AppendLine(string.Join(",", result.Columns.Select(c =>
+            {
+                if (!row.TryGetValue(c.Key.ToLowerInvariant(), out var cell)) return "";
+                var text = Fmt.Cell(cell, c.Type);
+                return Fmt.Csv(c.Type == "money" ? text.Replace(",", "") : text);
+            })));
+        if (result.Totals.Count > 0)
+            sb.AppendLine(string.Join(",", result.Columns.Select((c, i) => i == 0 ? "Total" : result.Totals.TryGetValue(c.Key, out var t) ? t.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) : "")));
+        try
+        {
+            var r = await Host.SaveText($"{Id}-{DateTime.Now:yyyyMMdd-HHmmss}.csv", sb.ToString());
+            saved = new Saved(r.Message, r.Ok ? r.Path : null);
+        }
+        catch (Exception ex) { saved = new Saved("Couldn't export: " + ex.Message, null); }
+    }
+
+    async Task OpenSaved()
+    {
+        if (saved?.Path is null) return;
+        try { await Host.OpenFile(saved.Path); }
+        catch (Exception ex) { saved = new Saved("Couldn't open the file: " + ex.Message, saved.Path); }
+    }
+
+    async Task ShowFolder()
+    {
+        try { await Host.OpenFolder(saved?.Path); }
+        catch (Exception ex) { saved = new Saved("Couldn't open the folder: " + ex.Message, saved?.Path); }
+    }
+}

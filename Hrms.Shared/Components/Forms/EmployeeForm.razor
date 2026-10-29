@@ -1,0 +1,54 @@
+@inject HrmsClient Api
+
+<form class="form" @onsubmit="Save">
+    <div class="form-grid">
+        <label class="field"><span>Employee code</span><input type="text" @bind="m.EmpCode" disabled="@(Existing is not null)" maxlength="20" /></label>
+        <label class="field"><span>Full name</span><input type="text" @bind="m.Name" maxlength="200" /></label>
+        <label class="field"><span>Date of birth</span><input type="date" @bind="m.Dob" /></label>
+        <label class="field"><span>Gender</span>
+            <select @bind="m.Gender"><option value="">Select</option>@foreach (var g in lookups?.Genders ?? []) { <option value="@g">@GenderName(g)</option> }</select></label>
+        <label class="field"><span>Status</span>
+            <select @bind="m.Status"><option value="">Select</option>@foreach (var s in lookups?.Statuses ?? []) { <option value="@s">@StatusName(s)</option> }</select></label>
+        <label class="field"><span>Phone</span><input type="text" @bind="m.Phone" maxlength="50" /></label>
+        <label class="field"><span>Office number</span><input type="text" @bind="m.OfficeNo" maxlength="50" /></label>
+        <label class="field full"><span>Description</span><input type="text" @bind="m.Description" /></label>
+        <label class="field full"><span>Remarks</span><input type="text" @bind="m.Remarks" /></label>
+    </div>
+    @if (error is not null) { <div class="form-error">@error</div> }
+    <div class="form-actions">
+        <button type="button" class="btn ghost" @onclick="OnCancel" disabled="@busy">Cancel</button>
+        <button type="submit" class="btn primary" disabled="@busy">@(busy ? "Saving..." : Existing is null ? "Add employee" : "Save changes")</button>
+    </div>
+</form>
+
+@code {
+    [Parameter] public EmployeeRow? Existing { get; set; }
+    [Parameter] public EventCallback<string> OnSaved { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    EmployeeInput m = new();
+    FormLookups? lookups;
+    bool busy;
+    string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { lookups = await Api.FormLookups(); } catch { }
+        if (Existing is not null)
+            m = new EmployeeInput { EmpCode = Existing.EmpCode, Name = Existing.Name, Dob = Existing.Dob, Gender = Existing.Gender, Status = Existing.MasterStatus,
+                Phone = Existing.Phone, OfficeNo = Existing.OfficeNo, Description = Existing.Description, Remarks = Existing.Remarks };
+        else
+            m = new EmployeeInput { EmpCode = lookups?.NextEmpCode ?? "", Status = "WK" };
+    }
+
+    static string GenderName(string g) => g switch { "M" => "Male", "F" => "Female", _ => g };
+    static string StatusName(string s) => s switch { "WK" => "Working", "RG" => "Resignation", "TM" => "Termination", "ML" => "On medical leave", "VA" => "On vacation", _ => s };
+
+    async Task Save()
+    {
+        busy = true; error = null;
+        var r = Existing is null ? await Api.CreateEmployee(m) : await Api.UpdateEmployee(m);
+        busy = false;
+        if (r.Ok) await OnSaved.InvokeAsync(m.EmpCode); else error = r.Error;
+    }
+}

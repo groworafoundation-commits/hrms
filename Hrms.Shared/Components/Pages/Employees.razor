@@ -1,0 +1,113 @@
+@page "/employees"
+@inject AuthState Auth
+@page "/payroll/employees"
+@inject HrmsClient Api
+
+<PageTitle>Employees</PageTitle>
+
+<section class="greeting">
+    <div><h1>Employees</h1><p>@(result?.Total ?? 0) @status employees</p></div>
+    <div class="page-actions">@if (Auth.CanAdd(AuthState.EmployeeMaster)) { <button type="button" class="btn primary" @onclick="() => showAdd = true"><Icon Name="plus" Size="16" /> Add employee</button> }</div>
+</section>
+
+@if (InPayroll) { <PayrollNav /> }
+
+<section class="card toolbar">
+    <label class="search flat">
+        <Icon Name="search" Size="18" />
+        <input type="text" placeholder="Search by name, code or designation" @bind="query" @bind:event="oninput" @bind:after="SearchChanged" />
+    </label>
+    <div class="seg">
+        @foreach (var s in new[] { "active", "inactive", "all" })
+        {
+            <button type="button" class="@(status == s ? "on" : "")" @onclick="() => SetStatus(s)">@Fmt.Title(s)</button>
+        }
+    </div>
+</section>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    @if (result is not null)
+    {
+        <section class="card">
+            <table class="tbl rows">
+                <thead><tr><th>Employee</th><th class="hide-sm">Code</th><th>Designation</th><th class="hide-sm">Nationality</th><th class="hide-sm">Joined</th><th>Status</th></tr></thead>
+                <tbody>
+                    @foreach (var e in result.Items)
+                    {
+                        <tr @onclick="() => Open(e.EmpCode)">
+                            <td><div class="who"><Avatar Name="@e.Name" Size="34" /><div><strong>@Fmt.Title(e.Name)</strong><small>@e.Phone</small></div></div></td>
+                            <td class="hide-sm">@e.EmpCode</td>
+                            <td>@(string.IsNullOrWhiteSpace(e.Designation) ? "-" : e.Designation)</td>
+                            <td class="hide-sm">@(string.IsNullOrWhiteSpace(e.Country) ? "-" : e.Country)</td>
+                            <td class="hide-sm">@Fmt.Date(e.Doj)</td>
+                            <td><StatusBadge Status="@(e.Status == "active" ? "Active" : "Inactive")" /></td>
+                        </tr>
+                    }
+                    @if (result.Items.Count == 0)
+                    {
+                        <tr><td colspan="6" class="empty-row">No employees match your search.</td></tr>
+                    }
+                </tbody>
+            </table>
+            <div class="pager">
+                <span class="muted">Page @result.Page of @Pages</span>
+                <div>
+                    <button type="button" class="pg" disabled="@(page <= 1)" @onclick="() => Go(page - 1)"><Icon Name="chevron-right" Size="16" /></button>
+                    <button type="button" class="pg next" disabled="@(page >= Pages)" @onclick="() => Go(page + 1)"><Icon Name="chevron-right" Size="16" /></button>
+                </div>
+            </div>
+        </section>
+    }
+</State>
+
+@if (showAdd)
+{
+    <Modal Title="Add employee" OnClose="() => showAdd = false">
+        <EmployeeForm OnSaved="Created" OnCancel="() => showAdd = false" />
+    </Modal>
+}
+
+@code {
+    [Inject] NavigationManager Nav { get; set; } = default!;
+
+    bool InPayroll => Nav.Uri.Contains("/payroll/", StringComparison.OrdinalIgnoreCase);
+
+    bool showAdd;
+    void Created(string code) { showAdd = false; Nav.NavigateTo($"employees/{Uri.EscapeDataString(code)}"); }
+
+    Paged<EmployeeRow>? result;
+    string query = "", status = "active";
+    int page = 1;
+    bool loading = true;
+    string? error;
+    CancellationTokenSource? debounce;
+
+    int Pages => result is null ? 1 : Math.Max(1, (int)Math.Ceiling(result.Total / (double)result.Size));
+
+    protected override Task OnInitializedAsync()
+    {
+        if (Nav.Uri.Contains("add=1", StringComparison.OrdinalIgnoreCase)) showAdd = true;
+        return Load();
+    }
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try { result = await Api.Employees(query, status, page); }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+
+    async Task SearchChanged()
+    {
+        debounce?.Cancel();
+        debounce = new CancellationTokenSource();
+        try { await Task.Delay(300, debounce.Token); } catch (TaskCanceledException) { return; }
+        page = 1;
+        await Load();
+    }
+
+    async Task SetStatus(string s) { status = s; page = 1; await Load(); }
+    async Task Go(int p) { page = Math.Clamp(p, 1, Pages); await Load(); }
+    void Open(string code) => Nav.NavigateTo($"employees/{Uri.EscapeDataString(code)}");
+}

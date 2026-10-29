@@ -1,0 +1,191 @@
+@page "/payroll/loans"
+@inject AuthState Auth
+@inject HrmsClient Api
+
+<PageTitle>Loans and advances</PageTitle>
+
+<section class="greeting"><div><h1>Payroll</h1><p>Loans, advances and their returns. Outstanding is estimated as issued minus payroll deductions minus manual returns.</p></div>
+    <div class="page-actions">@if (Auth.CanAdd(AuthState.Loans)) { <button type="button" class="btn primary" @onclick="() => showForm = true"><Icon Name="plus" Size="16" /> New loan or advance</button> }</div></section>
+<PayrollNav />
+
+<section class="card toolbar">
+    <label class="search flat"><Icon Name="search" Size="18" /><input type="text" placeholder="Search employee" @bind="query" @bind:event="oninput" @bind:after="Debounced" /></label>
+    <div class="seg">
+        @foreach (var s in new[] { "all", "active", "inactive" })
+        {
+            <button type="button" class="@(status == s ? "on" : "")" @onclick="() => SetStatus(s)">@Fmt.Title(s)</button>
+        }
+    </div>
+</section>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    @if (balances is not null)
+    {
+        <section class="kpis">
+            <article class="card kpi"><span class="kpi-icon tone-blue"><Icon Name="wallet" Size="26" /></span><div class="kpi-body"><small>Loans issued</small><strong>@Fmt.Money(balances.Sum(b => b.Loans))</strong></div></article>
+            <article class="card kpi"><span class="kpi-icon tone-violet"><Icon Name="file" Size="26" /></span><div class="kpi-body"><small>Advances issued</small><strong>@Fmt.Money(balances.Sum(b => b.Advances))</strong></div></article>
+            <article class="card kpi"><span class="kpi-icon tone-green"><Icon Name="check" Size="26" /></span><div class="kpi-body"><small>Recovered via payroll</small><strong>@Fmt.Money(balances.Sum(b => b.Deducted + b.Returned))</strong></div></article>
+            <article class="card kpi"><span class="kpi-icon tone-orange"><Icon Name="clock" Size="26" /></span><div class="kpi-body"><small>Estimated outstanding</small><strong>@Fmt.Money(balances.Sum(b => b.Outstanding))</strong></div></article>
+        </section>
+
+        <section class="card">
+            <div class="card-head"><h3>Balance by employee</h3><span class="muted">Select a row to filter the entries below</span></div>
+            <div class="scroll-x">
+            <table class="tbl rows">
+                <thead><tr><th>Employee</th><th class="r">Loans</th><th class="r">Advances</th><th class="r hide-sm">Deducted</th><th class="r hide-sm">Returned</th><th class="r">Outstanding</th><th class="hide-sm">Last entry</th></tr></thead>
+                <tbody>
+                    @foreach (var b in balances)
+                    {
+                        <tr class="@(code == b.EmpCode ? "sel" : "")" @onclick="() => PickEmployee(b.EmpCode)">
+                            <td><div class="who"><Avatar Name="@(b.Name ?? b.EmpCode)" Size="34" /><div><strong>@Fmt.Title(b.Name ?? b.EmpCode)</strong><small>@b.EmpCode | @b.Status</small></div></div></td>
+                            <td class="r">@Fmt.Money2(b.Loans)</td>
+                            <td class="r">@Fmt.Money2(b.Advances)</td>
+                            <td class="r hide-sm">@Fmt.Money2(b.Deducted)</td>
+                            <td class="r hide-sm">@Fmt.Money2(b.Returned)</td>
+                            <td class="r"><b>@Fmt.Money2(b.Outstanding)</b></td>
+                            <td class="hide-sm">@Fmt.Date(b.LastDate)</td>
+                        </tr>
+                    }
+                    @if (balances.Count == 0) { <tr><td colspan="7" class="empty-row">No loans or advances found.</td></tr> }
+                </tbody>
+            </table>
+            </div>
+        </section>
+    }
+</State>
+
+<section class="card">
+    <div class="card-head">
+        <h3>Entries @(code is null ? "" : "for " + code)</h3>
+        @if (code is not null) { <button type="button" class="link" @onclick="ClearEmployee">Show all employees</button> }
+    </div>
+    <TypeCards Items="entries?.Summary ?? []" Selected="type" OnSelect="PickType" />
+    <div class="scroll-x">
+    <table class="tbl">
+        <thead><tr><th>Date</th><th>Employee</th><th>Type</th><th class="r">Amount</th><th class="r hide-sm">Installments</th><th class="hide-sm">Reference</th><th class="hide-sm">Remarks</th><th></th></tr></thead>
+        <tbody>
+            @foreach (var e in entries?.Rows ?? [])
+            {
+                <tr>
+                    <td>@Fmt.Date(e.Date)</td>
+                    <td><strong>@Fmt.Title(e.Name ?? e.EmpCode)</strong><small>@e.EmpCode</small></td>
+                    <td><span class="badge @(e.Type is "LOREC" or "ADVREC" ? "badge-approved" : "badge-pending")">@e.TypeName</span></td>
+                    <td class="r">@Fmt.Money2(e.Amount)</td>
+                    <td class="r hide-sm">@(e.Installments is > 0 ? e.Installments.Value.ToString("0.#") : "-")</td>
+                    <td class="hide-sm">@e.TransNo</td>
+                    <td class="hide-sm clip">@e.Remarks</td>
+                    <td class="r">
+                        @if (e.Type is "LOAN" or "ADVAMT")
+                        {
+                            <div class="row-actions">
+                                <button type="button" class="btn ghost sm" @onclick="() => ShowSchedule(e)">Schedule</button>
+                                @if (Auth.CanDelete(AuthState.Loans)) { <button type="button" class="btn ghost sm" @onclick="() => { cancelling = e; cancelError = null; }">Cancel</button> }
+                            </div>
+                        }
+                    </td>
+                </tr>
+            }
+            @if (entries is not null && entries.Rows.Count == 0) { <tr><td colspan="8" class="empty-row">No entries for these filters.</td></tr> }
+        </tbody>
+    </table>
+    </div>
+    <p class="muted note">Showing up to 500 most recent entries from 2019 onward.</p>
+</section>
+
+@if (showForm)
+{
+    <Modal Title="New loan or advance" OnClose="() => showForm = false">
+        <LoanForm FixedEmp="@(code)" OnSaved="Saved" OnCancel="() => showForm = false" />
+    </Modal>
+}
+@if (schedule is not null)
+{
+    <Modal Title="@("Installments for " + scheduleFor)" Size="sm" OnClose="() => schedule = null">
+        <table class="tbl">
+            <thead><tr><th>Due</th><th class="r">Amount</th></tr></thead>
+            <tbody>
+                @foreach (var i in schedule) { <tr><td>@Fmt.Date(i.Date)</td><td class="r">@Fmt.Money2(i.Amount)</td></tr> }
+                @if (schedule.Count == 0) { <tr><td colspan="2" class="empty-row">No installments.</td></tr> }
+            </tbody>
+        </table>
+    </Modal>
+}
+@if (cancelling is not null)
+{
+    <ConfirmModal Title="Cancel entry" ConfirmText="Cancel entry" Message="@($"Cancel the {cancelling.TypeName.ToLower()} of {Fmt.Money2(cancelling.Amount)} for {Fmt.Title(cancelling.Name ?? cancelling.EmpCode)}? Its installments are cancelled too.")" Busy="cancelBusy" Error="cancelError" OnConfirm="ConfirmCancel" OnCancel="() => cancelling = null" />
+}
+@if (toast is not null) { <div class="toast">@toast</div> }
+
+@code {
+    [Inject] NavigationManager Nav { get; set; } = default!;
+    List<LoanBalance>? balances;
+    bool showForm, cancelBusy;
+    EntryRow? cancelling;
+    List<EntryRow>? schedule;
+    string scheduleFor = "";
+    string? cancelError;
+
+    string? toast;
+    async Task Toast(string message) { toast = message; StateHasChanged(); await Task.Delay(3500); toast = null; StateHasChanged(); }
+
+    async Task Saved() { showForm = false; await Load(); _ = Toast("Saved. Installments were created."); }
+
+    async Task ShowSchedule(EntryRow e)
+    {
+        scheduleFor = Fmt.Title(e.Name ?? e.EmpCode);
+        try { schedule = await Api.Installments(e.Id) ?? []; } catch { schedule = []; }
+    }
+
+    async Task ConfirmCancel()
+    {
+        cancelBusy = true; cancelError = null;
+        var r = await Api.CancelLoan(cancelling!.Id);
+        cancelBusy = false;
+        if (!r.Ok) { cancelError = r.Error; return; }
+        cancelling = null;
+        await Load();
+        _ = Toast("Entry cancelled");
+    }
+
+    EntryReport? entries;
+    string query = "", status = "all";
+    string? code, type, error;
+    bool loading = true;
+    CancellationTokenSource? debounce;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Nav.Uri.Contains("add=1", StringComparison.OrdinalIgnoreCase)) showForm = true;
+        await Load();
+    }
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try
+        {
+            balances = await Api.Loans(query, status);
+            await LoadEntries();
+        }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+
+    async Task LoadEntries()
+    {
+        try { entries = await Api.Entries("loans", type, code, query, new DateTime(2019, 1, 1), DateTime.Today.AddYears(1)); }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+    }
+
+    async Task SetStatus(string s) { status = s; await Load(); }
+    async Task PickEmployee(string c) { code = code == c ? null : c; await LoadEntries(); }
+    async Task ClearEmployee() { code = null; await LoadEntries(); }
+    async Task PickType(string? t) { type = t; await LoadEntries(); }
+
+    async Task Debounced()
+    {
+        debounce?.Cancel(); debounce = new CancellationTokenSource();
+        try { await Task.Delay(300, debounce.Token); } catch (TaskCanceledException) { return; }
+        await Load();
+    }
+}

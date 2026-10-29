@@ -1,0 +1,141 @@
+@page "/admin/approvals"
+@inject PortalClient Portal
+@inject AuthState Auth
+
+<PageTitle>Leave approvals</PageTitle>
+
+<section class="greeting"><div><h1>Leave approvals</h1><p>@rows.Count request@(rows.Count == 1 ? "" : "s") waiting with you.</p></div></section>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    <section class="card">
+        <table class="tbl rows">
+            <thead><tr><th>Employee</th><th>Leave type</th><th>Dates</th><th class="r">Days</th><th class="hide-sm">From</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var l in rows)
+                {
+                    <tr>
+                        <td><div class="who"><Avatar Name="@l.Name" Size="34" /><div><strong>@Fmt.Title(l.Name)</strong><small>@l.EmpCode | requested @Fmt.Date(l.Applied)</small></div></div></td>
+                        <td>@l.LeaveName</td>
+                        <td>@Fmt.Range(l.FromDate, l.ToDate)</td>
+                        <td class="r">@l.Days.ToString("0.#")</td>
+                        <td class="hide-sm">@(l.FromUser is null ? "-" : Fmt.Title(l.FromUser))@if (!string.IsNullOrEmpty(l.Note)) { <small class="muted"> "@l.Note"</small> }</td>
+                        <td class="r"><button type="button" class="btn primary sm" @onclick="() => Open(l)">Review</button></td>
+                    </tr>
+                }
+                @if (rows.Count == 0) { <tr><td colspan="6" class="empty-row">Nothing is waiting with you.</td></tr> }
+            </tbody>
+        </table>
+    </section>
+</State>
+
+@if (current is not null)
+{
+    <Modal Title="@($"Leave request - {Fmt.Title(current.Name)}")" OnClose="Close">
+        <div class="form">
+            <dl class="facts2">
+                <div><dt>Leave</dt><dd>@current.LeaveName, @Fmt.Range(current.FromDate, current.ToDate) (@current.Days.ToString("0.#") days)</dd></div>
+                <div><dt>Requested</dt><dd>@Fmt.Date(current.Applied)</dd></div>
+                <div><dt>Came from</dt><dd>@(current.FromUser is null ? "-" : Fmt.Title(current.FromUser))@if (!string.IsNullOrEmpty(current.Note)) { <span class="muted"> "@current.Note"</span> }</dd></div>
+                @if (opt is not null) { <div><dt>Your level</dt><dd>@opt.Level (final approval at @opt.DocLevel)</dd></div> }
+            </dl>
+
+            @if (opt is null && optError is null) { <p class="muted">Loading...</p> }
+            @if (optError is not null) { <div class="form-error">@optError</div> }
+            @if (opt is not null)
+            {
+                <div class="seg">
+                    @if (Auth.CanEdit("H201")) { <button type="button" class="@(mode == "approve" ? "on" : "")" @onclick='() => mode = "approve"'>@(opt.Final ? "Approve" : "Approve and send up")</button> }
+                    @if (Auth.CanEdit("H201") && opt.Back.Count > 0) { <button type="button" class="@(mode == "back" ? "on" : "")" @onclick='() => mode = "back"'>Send back</button> }
+                    @if (Auth.CanDelete("H201")) { <button type="button" class="@(mode == "reject" ? "on" : "")" @onclick='() => mode = "reject"'>Reject</button> }
+                </div>
+
+                @if (mode == "approve")
+                {
+                    if (opt.Final) { <p class="muted note">Your approval is final. The leave becomes approved.</p> }
+                    else
+                    {
+                        <label class="field full"><span>Send to (senior to you)</span>
+                            <select @bind="to">
+                                <option value="">Select a person</option>
+                                @foreach (var p in opt.Push) { <option value="@p.Id">@Fmt.Title(p.Name) | @p.RoleName (level @p.Level)</option> }
+                            </select></label>
+                    }
+                    <label class="field full"><span>Note (optional)</span><input type="text" @bind="note" /></label>
+                }
+                else if (mode == "back")
+                {
+                    <label class="field full"><span>Send back to</span>
+                        <select @bind="to">
+                            <option value="">Select a person</option>
+                            @foreach (var p in opt.Back) { <option value="@p.Id">@Fmt.Title(p.Name) (level @p.Level)</option> }
+                        </select></label>
+                    <label class="field full"><span>What do you need from them?</span><input type="text" @bind="note" /></label>
+                }
+                else if (mode == "reject")
+                {
+                    <label class="field full"><span>Reason for rejecting</span><input type="text" @bind="note" /></label>
+                }
+            }
+            @if (actionError is not null) { <div class="form-error">@actionError</div> }
+            <div class="form-actions">
+                <button type="button" class="btn ghost" @onclick="Close" disabled="@busy">Close</button>
+                @if (opt is not null)
+                {
+                    <button type="button" class="btn @(mode == "reject" ? "danger" : "primary")" @onclick="Submit" disabled="@busy">
+                        @(busy ? "Saving..." : mode == "reject" ? "Reject request" : mode == "back" ? "Send back" : opt.Final ? "Approve" : "Approve and send up")
+                    </button>
+                }
+            </div>
+        </div>
+    </Modal>
+}
+@if (toast is not null) { <div class="toast">@toast</div> }
+
+@code {
+    List<ApprovalRow> rows = [];
+    ApprovalRow? current;
+    ApprovalOptions? opt;
+    string mode = "approve", to = "", note = "";
+    bool loading = true, busy;
+    string? error, optError, actionError, toast;
+
+    protected override Task OnInitializedAsync() => Load();
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try { rows = await Portal.Approvals() ?? []; }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+
+    async Task Open(ApprovalRow l)
+    {
+        current = l; opt = null; optError = actionError = null; mode = "approve"; to = note = "";
+        try { opt = await Portal.ApprovalOptions(l.Id); }
+        catch (Exception ex) { optError = "Couldn't load the options: " + ex.Message; }
+    }
+
+    void Close() { current = null; opt = null; }
+
+    async Task Submit()
+    {
+        if (current is null || opt is null) return;
+        busy = true; actionError = null;
+        var r = mode switch
+        {
+            "reject" => await Portal.Reject(current.Id, note),
+            "back" => await Portal.SendBack(current.Id, to, note),
+            _ => await Portal.Approve(current.Id, opt.Final ? null : to, note),
+        };
+        busy = false;
+        if (!r.Ok) { actionError = r.Error; return; }
+        var done = mode == "reject" ? "Rejected" : mode == "back" ? "Sent back" : opt.Final ? "Approved" : "Approved and sent up";
+        var who = Fmt.Title(current.Name);
+        Close();
+        await Load();
+        toast = $"{done}: {who}";
+        StateHasChanged();
+        await Task.Delay(3500); toast = null; StateHasChanged();
+    }
+}

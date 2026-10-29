@@ -1,0 +1,221 @@
+@page "/admin/attendance"
+@inject AttendanceClient Api
+@inject AuthState Auth
+@inject IHostServices Host
+
+<PageTitle>Attendance</PageTitle>
+
+<section class="greeting">
+    <div><h1>Attendance</h1><p>Who is in today, and the monthly register.</p></div>
+    <div class="page-actions">
+        @if (tab == "register" && register is not null && Auth.CanPrint("H205")) { <button type="button" class="btn primary" @onclick="ExportCsv">Export CSV</button> }
+    </div>
+</section>
+
+<nav class="subnav">
+    <button type="button" class="subnav-item @(tab == "today" ? "active" : "")" @onclick='() => SetTab("today")'>Daily board</button>
+    <button type="button" class="subnav-item @(tab == "register" ? "active" : "")" @onclick='() => SetTab("register")'>Monthly register</button>
+</nav>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    @if (tab == "today" && board is not null)
+    {
+        var rows = Filtered;
+        <section class="kpis">
+            <article class="card kpi"><span class="kpi-icon tone-green"><Icon Name="check" Size="26" /></span><div class="kpi-body"><small>Present</small><strong>@board.Rows.Count(r => Counts(r, "in"))</strong><span class="kpi-note up">punched in</span></div></article>
+            <article class="card kpi"><span class="kpi-icon tone-orange"><Icon Name="clock" Size="26" /></span><div class="kpi-body"><small>Late</small><strong>@board.Rows.Count(r => r.Day.Late)</strong><span class="kpi-note link">after grace time</span></div></article>
+            <article class="card kpi"><span class="kpi-icon tone-red"><Icon Name="x" Size="26" /></span><div class="kpi-body"><small>Absent / not in</small><strong>@board.Rows.Count(r => r.Day.Status is "Absent" or "Pending")</strong><span class="kpi-note down">no punch</span></div></article>
+            <article class="card kpi"><span class="kpi-icon tone-violet"><Icon Name="calendar" Size="26" /></span><div class="kpi-body"><small>On leave</small><strong>@board.Rows.Count(r => r.Day.Status == "Leave")</strong><span class="kpi-note link">approved leave</span></div></article>
+        </section>
+
+        <section class="card toolbar">
+            <label class="search flat"><Icon Name="search" Size="18" /><input type="text" placeholder="Search employee" @bind="query" @bind:event="oninput" /></label>
+            <input class="sel" type="date" value="@date.ToString("yyyy-MM-dd")" @onchange="DateChanged" />
+            <select class="sel" @bind="statusFilter">
+                <option value="">All statuses</option>
+                <option value="in">Punched in</option>
+                <option value="late">Late</option>
+                <option value="none">No punch</option>
+                <option value="Leave">On leave</option>
+                <option value="Missing">Missing punch-out</option>
+            </select>
+        </section>
+
+        <section class="card">
+            <table class="tbl rows">
+                <thead><tr><th>Employee</th><th>Status</th><th>First in</th><th>Last out</th><th class="r">Worked</th><th class="hide-sm">Shift</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var r in rows)
+                    {
+                        <tr>
+                            <td><div class="who"><Avatar Name="@r.Name" Size="34" /><div><strong>@Fmt.Title(r.Name)</strong><small>@r.EmpCode | @r.Designation</small></div></div></td>
+                            <td><span class="att-status sm @Att.Css(r.Day.Late && r.Day.Status == "Present" ? "PresentLate" : r.Day.Status)">@Att.Label(r.Day.Status)</span>@if (r.Day.Late) { <small class="muted"> late @Att.Short(r.Day.LateMinutes)</small> }</td>
+                            <td>@Att.Time(r.Day.FirstIn)</td>
+                            <td>@(r.Day.OpenIn ? "-" : Att.Time(r.Day.LastOut))</td>
+                            <td class="r">@Att.Hm(r.Day.WorkedMinutes)</td>
+                            <td class="hide-sm">@r.Shift</td>
+                            <td class="r"><button type="button" class="btn ghost sm" @onclick="() => OpenDay(r.EmpCode, board.Date)">Details</button></td>
+                        </tr>
+                    }
+                    @if (rows.Count == 0) { <tr><td colspan="7" class="empty-row">No employees match.</td></tr> }
+                </tbody>
+            </table>
+        </section>
+    }
+
+    @if (tab == "register" && register is not null)
+    {
+        <section class="card toolbar cal-bar att-bar">
+            <div class="cal-nav">
+                <button type="button" class="icon-btn sm bordered" aria-label="Previous month" @onclick="() => Move(-1)"><Icon Name="chevron-right" Size="16" /></button>
+                <button type="button" class="icon-btn sm bordered next" aria-label="Next month" @onclick="() => Move(1)"><Icon Name="chevron-right" Size="16" /></button>
+                <h2>@month.ToString("MMMM yyyy")</h2>
+            </div>
+            <label class="search flat"><Icon Name="search" Size="18" /><input type="text" placeholder="Search employee" @bind="query" @bind:event="oninput" /></label>
+            <div class="att-legend">
+                @foreach (var k in new[] { "Present", "PresentLate", "HalfDay", "Absent", "Leave", "Holiday", "Off" }) { <span class="@Att.Css(k)">@Att.Letter(k) = @Att.Label(k)</span> }
+            </div>
+        </section>
+        <section class="card reg-wrap">
+            <table class="reg">
+                <thead>
+                    <tr><th class="sticky">Employee</th>
+                        @for (var d = 1; d <= register.DaysInMonth; d++) { var dt = new DateTime(month.Year, month.Month, d); <th class="@(dt.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday ? "wk" : "")">@d<small>@dt.ToString("ddd")[0]</small></th> }
+                        <th>P</th><th>A</th><th>L</th><th>Late</th><th>Hours</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in RegisterFiltered)
+                    {
+                        <tr>
+                            <td class="sticky"><strong>@Fmt.Title(r.Name)</strong><small>@r.EmpCode</small></td>
+                            @for (var d = 0; d < r.Days.Count; d++)
+                            {
+                                var i = d; var st = r.Days[i];
+                                <td class="@Att.Css(st)" title="@Att.Label(st)" @onclick="() => OpenDay(r.EmpCode, new DateTime(month.Year, month.Month, i + 1))">@Att.Letter(st)</td>
+                            }
+                            <td><b>@r.Summary.PresentDays.ToString("0.#")</b></td><td>@r.Summary.Absent</td><td>@r.Summary.Leave</td><td>@r.Summary.Late</td><td>@(r.Summary.WorkedMinutes / 60)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </section>
+    }
+</State>
+
+@if (detail is not null)
+{
+    <Modal Title="@($"{Fmt.Title(detail.Name)} | {detail.Day.Date:ddd d MMM yyyy}")" OnClose="() => detail = null">
+        <div class="form">
+            <span class="att-status @Att.Css(detail.Day.Late && detail.Day.Status == "Present" ? "PresentLate" : detail.Day.Status)">@Att.Label(detail.Day.Status)@(detail.Day.Late ? " | late " + Att.Short(detail.Day.LateMinutes) : "")@(detail.Day.EarlyOut ? " | left early" : "")</span>
+            <p class="muted note">@detail.Shift.Name, @Att.Hhmm(detail.Shift.StartTime) - @Att.Hhmm(detail.Shift.EndTime). Worked @Att.Hm(detail.Day.WorkedMinutes).</p>
+            <ol class="att-timeline">
+                @foreach (var p in detail.Punches)
+                {
+                    <li class="@(p.Direction == "IN" ? "in" : "out")">
+                        <b>@(p.Direction == "IN" ? "Punch in" : "Punch out")</b><span>@Att.Time(p.PunchTime)</span><small>@p.Source @(string.IsNullOrEmpty(p.WorkMode) ? "" : "| " + p.WorkMode) @(string.IsNullOrEmpty(p.Note) ? "" : "| " + p.Note)</small>
+                        @if (Auth.CanDelete("H205")) { <button type="button" class="btn ghost sm" @onclick="() => RemovePunch(p)">Remove</button> }
+                    </li>
+                }
+                @if (detail.Punches.Count == 0) { <li class="muted">No punches this day.</li> }
+            </ol>
+            @if (Auth.CanAdd("H205") && detail.Day.Date <= DateTime.Today)
+            {
+                <div class="form-grid">
+                    <label class="field"><span>Add a punch</span><select @bind="addDir"><option value="IN">Punch in</option><option value="OUT">Punch out</option></select></label>
+                    <label class="field"><span>Time</span><input type="time" value="@addTime" @onchange='e => addTime = e.Value?.ToString() ?? ""' /></label>
+                    <label class="field full"><span>Note</span><input type="text" maxlength="120" @bind="addNote" placeholder="Why is this being added?" /></label>
+                </div>
+                <div class="form-actions"><button type="button" class="btn primary" disabled="@busy" @onclick="AddPunch">Add punch</button></div>
+            }
+            @if (detailError is not null) { <div class="form-error">@detailError</div> }
+        </div>
+    </Modal>
+}
+@if (toast is not null) { <div class="toast">@toast</div> }
+
+@code {
+    BoardInfo? board;
+    RegisterInfo? register;
+    AdminDayDetail? detail;
+    DateTime date = DateTime.Today;
+    DateTime month = new(DateTime.Today.Year, DateTime.Today.Month, 1);
+    string tab = "today", query = "", statusFilter = "", addDir = "IN", addTime = "09:00", addNote = "";
+    bool loading = true, busy;
+    string? error, detailError, toast;
+
+    static bool Counts(BoardRowDto r, string kind) => kind == "in" && r.Day.Punches > 0;
+
+    List<BoardRowDto> Filtered => board!.Rows.Where(r =>
+        (query == "" || r.Name.Contains(query, StringComparison.OrdinalIgnoreCase) || r.EmpCode.Contains(query, StringComparison.OrdinalIgnoreCase)) &&
+        (statusFilter switch { "" => true, "in" => r.Day.Punches > 0, "late" => r.Day.Late, "none" => r.Day.Status is "Absent" or "Pending", _ => r.Day.Status == statusFilter })).ToList();
+    List<RegisterRowDto> RegisterFiltered => register!.Rows.Where(r => query == "" || r.Name.Contains(query, StringComparison.OrdinalIgnoreCase) || r.EmpCode.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
+
+    protected override Task OnInitializedAsync() => Load();
+
+    async Task SetTab(string t) { tab = t; await Load(); }
+    async Task Move(int by) { month = month.AddMonths(by); await Load(); }
+    async Task DateChanged(ChangeEventArgs e) { if (DateTime.TryParse(e.Value?.ToString(), out var d)) { date = d; await Load(); } }
+    async Task Toast(string message) { toast = message; StateHasChanged(); await Task.Delay(3500); toast = null; StateHasChanged(); }
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try
+        {
+            if (tab == "today") board = await Api.Board(date);
+            else register = await Api.Register(month.ToString("yyyy-MM"));
+        }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+
+    async Task OpenDay(string emp, DateTime day)
+    {
+        detailError = null;
+        try { detail = await Api.AdminDay(emp, day); addTime = "09:00"; addNote = ""; }
+        catch (Exception ex) { error = ex.Message; }
+    }
+
+    async Task AddPunch()
+    {
+        busy = true; detailError = null;
+        var r = await Api.AddPunch(detail!.Emp, detail.Day.Date, addTime, addDir, addNote);
+        busy = false;
+        if (!r.Ok) { detailError = r.Error; return; }
+        await Refresh();
+        _ = Toast("Punch added");
+    }
+
+    async Task RemovePunch(PunchDto p)
+    {
+        var r = await Api.DeletePunch(p.Id);
+        if (!r.Ok) { detailError = r.Error; return; }
+        await Refresh();
+        _ = Toast("Punch removed");
+    }
+
+    async Task Refresh()
+    {
+        var emp = detail!.Emp; var day = detail.Day.Date;
+        detail = await Api.AdminDay(emp, day);
+        await Load();
+    }
+
+    async Task ExportCsv()
+    {
+        var sb = new System.Text.StringBuilder();
+        var head = new List<string> { "Code", "Employee" };
+        for (var d = 1; d <= register!.DaysInMonth; d++) head.Add(d.ToString());
+        head.AddRange(["Present", "Absent", "Leave", "Late", "Hours"]);
+        sb.AppendLine(string.Join(",", head.Select(Fmt.Csv)));
+        foreach (var r in register.Rows)
+        {
+            var cells = new List<string> { r.EmpCode, r.Name };
+            cells.AddRange(r.Days.Select(Att.Letter));
+            cells.AddRange([r.Summary.PresentDays.ToString("0.#"), r.Summary.Absent.ToString(), r.Summary.Leave.ToString(), r.Summary.Late.ToString(), (r.Summary.WorkedMinutes / 60).ToString()]);
+            sb.AppendLine(string.Join(",", cells.Select(Fmt.Csv)));
+        }
+        var saved = await Host.SaveText($"attendance-{register.Month}.csv", sb.ToString());
+        _ = Toast(saved.Message);
+    }
+}

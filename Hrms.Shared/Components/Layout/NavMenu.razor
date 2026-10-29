@@ -1,0 +1,48 @@
+﻿<aside class="sidebar">
+    <div class="brand">
+        <span class="brand-mark"><Icon Name="users" Size="22" /></span>
+        <div>
+            <div class="brand-name">HRMS</div>
+            <div class="brand-sub">People | Process | Growth</div>
+        </div>
+    </div>
+
+    <nav class="nav">
+        @foreach (var item in Items.Where(i => i.Options is null || Auth.CanAny(i.Options)))
+        {
+            <NavLink class="nav-item" href="@item.Href" Match="@(item.Href == "" ? NavLinkMatch.All : NavLinkMatch.Prefix)">
+                <Icon Name="@item.Icon" />
+                <span>@item.Label</span>
+            </NavLink>
+        }
+        @foreach (var m in (Auth.User?.Menu ?? []).OrderBy(x => x.Sequence))
+        {
+            <NavLink class="nav-item" href="@m.Route" Match="@(m.Route == "my" ? NavLinkMatch.All : NavLinkMatch.Prefix)">
+                <Icon Name="@m.Icon" />
+                <span>@m.Name</span>
+            </NavLink>
+        }
+    </nav>
+
+    <div class="sidebar-promo">
+        <h4>Stronger Teams<br />Brighter Tomorrow</h4>
+        <p>People. Process. Growth.</p>
+    </div>
+
+    <div class="sidebar-ai"><span class="sidebar-ai-icon"><Icon Name="building" Size="18" /></span><span><strong>@(Auth.User?.Company ?? "Launch Tech.")</strong><small>FY @Auth.User?.FinYear | ERP linked</small></span></div>
+</aside>
+
+@inject AuthState Auth
+
+@code {
+    record NavItem(string Label, string Icon, string Href, string[]? Options = null);
+
+    static readonly NavItem[] Items =
+    [
+        new("Dashboard", "home", "", AuthState.OrgOptions),
+        new("Employees", "users", "employees", [AuthState.EmployeeMaster]),
+        new("Leave Management", "calendar", "leave", [AuthState.Leave]),
+        new("Payroll", "wallet", "payroll", [AuthState.Grade, AuthState.Variable, AuthState.Loans, AuthState.Transfer, AuthState.Reports, "164"]),
+        new("Reports & Analytics", "chart", "payroll/reports", [AuthState.Reports, "164"]),
+    ];
+}

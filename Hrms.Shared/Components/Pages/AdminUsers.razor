@@ -1,0 +1,177 @@
+@page "/admin/users"
+@inject PortalClient Portal
+@inject AuthState Auth
+
+<PageTitle>Users</PageTitle>
+
+<section class="greeting">
+    <div><h1>Users</h1><p>@rows.Count user@(rows.Count == 1 ? "" : "s"). Create logins for employees and administrators and give them a role.</p></div>
+    <div class="page-actions">@if (Auth.CanAdd("H202")) { <button type="button" class="btn primary" @onclick="New"><Icon Name="plus" Size="16" /> New user</button> }</div>
+</section>
+
+<section class="card toolbar">
+    <label class="search flat"><Icon Name="search" Size="18" /><input type="text" placeholder="Search user or employee" @bind="query" @bind:event="oninput" @bind:after="Debounced" /></label>
+    <select class="sel" @bind="roleFilter" @bind:after="Load">
+        <option value="">All roles</option>
+        @foreach (var r in roles) { <option value="@r.RoleId">@r.RoleName</option> }
+    </select>
+</section>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    <section class="card">
+        <table class="tbl rows">
+            <thead><tr><th>User</th><th>Role</th><th class="hide-sm">Employee</th><th class="r hide-sm">Employees seen</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var u in rows)
+                {
+                    <tr>
+                        <td><div class="who"><Avatar Name="@(u.FullName ?? u.UserName)" Size="34" /><div><strong>@Fmt.Title(u.FullName ?? u.UserName)</strong><small>@u.UserId</small></div></div></td>
+                        <td>@(u.RoleName ?? u.RoleId)</td>
+                        <td class="hide-sm">@(u.EmployeeCode is null ? "-" : u.EmployeeCode)</td>
+                        <td class="r hide-sm">@u.Scope</td>
+                        <td><StatusBadge Status="@(u.Disabled ? "Inactive" : "Active")" />@if (u.Locked) { <span class="badge badge-rejected"> locked</span> }@if (u.MustChange) { <small class="muted"> must change password</small> }</td>
+                        <td class="r"><div class="row-actions">@if (u.Locked && Auth.CanEdit("H202")) { <button type="button" class="btn primary sm" @onclick="() => DoUnlock(u)">Unlock</button> }@if (Auth.CanEdit("H202")) { <button type="button" class="btn ghost sm" @onclick="() => Edit(u)">Edit</button> }</div></td>
+                    </tr>
+                }
+                @if (rows.Count == 0) { <tr><td colspan="6" class="empty-row">No users found.</td></tr> }
+            </tbody>
+        </table>
+    </section>
+</State>
+
+@if (form is not null)
+{
+    <Modal Title="@(editingId is null ? "New user" : "Edit user")" OnClose="() => form = null">
+        <form class="form" @onsubmit="Save">
+            <div class="form-grid">
+                @if (editingId is null)
+                {
+                    <label class="field full"><span>Employee (leave empty for an administrator or other user)</span>
+                        <select value="@form.Employee" @onchange="EmployeeChosen">
+                            <option value="">Not an employee</option>
+                            @foreach (var e in withoutLogin) { <option value="@e.Id">@Fmt.Title(e.Name) (@e.Id)</option> }
+                        </select></label>
+                    <label class="field"><span>User ID</span><input type="text" maxlength="20" @bind="form.UserId" /></label>
+                }
+                <label class="field"><span>Login name</span><input type="text" @bind="form.UserName" /></label>
+                <label class="field full"><span>Full name</span><input type="text" @bind="form.FullName" /></label>
+                <label class="field"><span>Role</span>
+                    <select @bind="form.RoleId"><option value="">Select</option>@foreach (var r in roles) { <option value="@r.RoleId">@r.RoleName</option> }</select></label>
+                <label class="field"><span>@(editingId is null ? "Temporary password" : "New temporary password (leave empty to keep)")</span><input type="password" @bind="form.Password" autocomplete="new-password" /></label>
+                <label class="field"><span>Email</span><input type="text" @bind="form.Email" /></label>
+                <label class="field"><span>Mobile</span><input type="text" @bind="form.Mobile" /></label>
+                <label class="field full"><span>Employees this user can see</span>
+                    <select @bind="form.Scope">
+                        @if (editingId is not null) { <option value="keep">Keep as it is</option> }
+                        <option value="self">Only their own record</option>
+                        <option value="all">All employees</option>
+                        <option value="copy">Same as another user</option>
+                    </select></label>
+                @if (form.Scope == "copy")
+                {
+                    <label class="field full"><span>Copy from user</span>
+                        <select @bind="form.CopyFrom"><option value="">Select</option>@foreach (var u in rows) { <option value="@u.UserId">@u.UserId - @(u.FullName ?? u.UserName)</option> }</select></label>
+                }
+                <p class="muted note full">Passwords need at least 8 characters with a letter and a number. The person must choose their own at first sign-in.</p>
+                <label class="field check full"><input type="checkbox" @bind="form.Disabled" /><span>Disabled (cannot sign in)</span></label>
+            </div>
+            @if (formError is not null) { <div class="form-error">@formError</div> }
+            <div class="form-actions">
+                <button type="button" class="btn ghost" @onclick="() => form = null" disabled="@busy">Cancel</button>
+                <button type="submit" class="btn primary" disabled="@busy">@(busy ? "Saving..." : "Save user")</button>
+            </div>
+        </form>
+    </Modal>
+}
+@if (toast is not null) { <div class="toast">@toast</div> }
+
+@code {
+    class UserForm
+    {
+        public string Employee { get; set; } = "";
+        public string UserId { get; set; } = "";
+        public string UserName { get; set; } = "";
+        public string FullName { get; set; } = "";
+        public string RoleId { get; set; } = "";
+        public string Password { get; set; } = "";
+        public string Email { get; set; } = "";
+        public string Mobile { get; set; } = "";
+        public bool Disabled { get; set; }
+        public string Scope { get; set; } = "self";
+        public string CopyFrom { get; set; } = "";
+    }
+
+    List<UserDto> rows = [];
+    List<RoleDto> roles = [];
+    List<Plain> withoutLogin = [];
+    UserForm? form;
+    string? editingId, error, formError, toast;
+    string query = "", roleFilter = "";
+    bool loading = true, busy;
+    CancellationTokenSource? debounce;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { roles = await Portal.Roles() ?? []; } catch { }
+        await Load();
+    }
+
+    async Task DoUnlock(UserDto u)
+    {
+        var r = await Portal.Unlock(u.UserId);
+        if (r.Ok) { await Load(); _ = Toast("Unlocked " + u.UserId); } else error = r.Error;
+    }
+
+    async Task Debounced()
+    {
+        debounce?.Cancel();
+        debounce = new CancellationTokenSource();
+        try { await Task.Delay(300, debounce.Token); } catch (TaskCanceledException) { return; }
+        await Load();
+    }
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try { rows = await Portal.Users(query, roleFilter) ?? []; }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+
+    async Task Toast(string message) { toast = message; StateHasChanged(); await Task.Delay(3500); toast = null; StateHasChanged(); }
+
+    async Task New()
+    {
+        editingId = null; formError = null;
+        try { withoutLogin = await Portal.EmployeesWithoutLogin() ?? []; } catch { withoutLogin = []; }
+        form = new UserForm { RoleId = roles.FirstOrDefault(r => r.RoleId == "HRM-EMP")?.RoleId ?? "" };
+    }
+
+    void EmployeeChosen(ChangeEventArgs e)
+    {
+        var code = e.Value?.ToString() ?? "";
+        form!.Employee = code;
+        var emp = withoutLogin.FirstOrDefault(x => x.Id == code);
+        if (emp is null) { form.Scope = "all"; return; }
+        form.UserId = emp.Id; form.UserName = emp.Id; form.FullName = Fmt.Title(emp.Name); form.Scope = "self";
+        form.RoleId = roles.FirstOrDefault(r => r.RoleId == "HRM-EMP")?.RoleId ?? form.RoleId;
+    }
+
+    void Edit(UserDto u)
+    {
+        editingId = u.UserId; formError = null;
+        form = new UserForm { UserId = u.UserId, UserName = u.UserName, FullName = u.FullName ?? "", RoleId = u.RoleId ?? "", Email = u.Email ?? "", Mobile = u.Mobile ?? "", Disabled = u.Disabled, Scope = "keep" };
+    }
+
+    async Task Save()
+    {
+        busy = true; formError = null;
+        var body = new { userId = form!.UserId, userName = form.UserName, fullName = form.FullName, roleId = form.RoleId, password = form.Password, email = form.Email, mobile = form.Mobile, disabled = form.Disabled, scope = form.Scope, copyFrom = form.CopyFrom };
+        var r = editingId is null ? await Portal.CreateUser(body) : await Portal.UpdateUser(editingId, body);
+        busy = false;
+        if (!r.Ok) { formError = r.Error; return; }
+        form = null;
+        await Load();
+        _ = Toast("User saved");
+    }
+}

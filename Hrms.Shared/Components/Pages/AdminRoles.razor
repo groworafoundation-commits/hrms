@@ -1,0 +1,122 @@
+@page "/admin/roles"
+@inject PortalClient Portal
+@inject AuthState Auth
+
+<PageTitle>Roles and access</PageTitle>
+
+<section class="greeting">
+    <div><h1>Roles and access</h1><p>Choose a role, then tick what it can see and do.</p></div>
+    <div class="page-actions">@if (Auth.CanAdd("H203")) { <button type="button" class="btn primary" @onclick="NewRole"><Icon Name="plus" Size="16" /> New role</button> }</div>
+</section>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    <section class="card toolbar">
+        <select class="sel" @bind="roleId" @bind:after="LoadRights">
+            <option value="">Select a role</option>
+            @foreach (var r in roles) { <option value="@r.RoleId">@r.RoleName (@r.Users user@(r.Users == 1 ? "" : "s"))</option> }
+        </select>
+        @if (roleId != "") { <span class="muted">Role ID @roleId | authority level @(roles.FirstOrDefault(r => r.RoleId == roleId)?.AuthLevel)</span> }
+    </section>
+
+    @if (rights is not null)
+    {
+        <section class="card">
+            <table class="tbl rows">
+                <thead><tr><th>Menu or screen</th><th>Group</th><th>See</th><th>Add</th><th>Edit</th><th>Delete</th><th>Print</th><th class="r">Level</th></tr></thead>
+                <tbody>
+                    @foreach (var r in rights)
+                    {
+                        <tr>
+                            <td><strong>@r.Name</strong><small class="muted"> @r.OptionId</small></td>
+                            <td>@r.Group</td>
+                            <td><input type="checkbox" @bind="r.View" disabled="@(!canEdit)" /></td>
+                            <td><input type="checkbox" @bind="r.Add" disabled="@(!canEdit || !r.View)" /></td>
+                            <td><input type="checkbox" @bind="r.Edit" disabled="@(!canEdit || !r.View)" /></td>
+                            <td><input type="checkbox" @bind="r.Delete" disabled="@(!canEdit || !r.View)" /></td>
+                            <td><input type="checkbox" @bind="r.Print" disabled="@(!canEdit || !r.View)" /></td>
+                            <td class="r"><input type="number" min="0" max="10" class="lvl" @bind="r.Level" disabled="@(!canEdit || !r.View)" /></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            <p class="muted note">Level is the authority behind a save. Leave requests need a level below the document level to stay pending. People already signed in with this role are signed out so the change applies.</p>
+            @if (saveError is not null) { <div class="form-error">@saveError</div> }
+            @if (canEdit) { <div class="form-actions"><button type="button" class="btn primary" @onclick="SaveRights" disabled="@busy">@(busy ? "Saving..." : "Save access")</button></div> }
+        </section>
+    }
+</State>
+
+@if (showNew)
+{
+    <Modal Title="New role" OnClose="() => showNew = false">
+        <form class="form" @onsubmit="CreateRole">
+            <div class="form-grid">
+                <label class="field"><span>Role ID (up to 8 characters)</span><input type="text" maxlength="8" @bind="newId" /></label>
+                <label class="field"><span>Role name</span><input type="text" @bind="newName" /></label>
+                <label class="field"><span>Authority level (0-10)</span><input type="number" min="0" max="10" @bind="newLevel" /></label>
+                <label class="field"><span>Copy access from</span>
+                    <select @bind="newCopy"><option value="">Start empty</option>@foreach (var r in roles) { <option value="@r.RoleId">@r.RoleName</option> }</select></label>
+            </div>
+            @if (newError is not null) { <div class="form-error">@newError</div> }
+            <div class="form-actions">
+                <button type="button" class="btn ghost" @onclick="() => showNew = false" disabled="@busy">Cancel</button>
+                <button type="submit" class="btn primary" disabled="@busy">Create role</button>
+            </div>
+        </form>
+    </Modal>
+}
+@if (toast is not null) { <div class="toast">@toast</div> }
+
+@code {
+    List<RoleDto> roles = [];
+    List<RightDto>? rights;
+    string roleId = "", newId = "", newName = "", newCopy = "";
+    int newLevel = 1;
+    bool loading = true, busy, showNew;
+    string? error, saveError, newError, toast;
+    bool canEdit => Auth.CanEdit("H203");
+
+    protected override Task OnInitializedAsync() => Load();
+
+    async Task Toast(string message) { toast = message; StateHasChanged(); await Task.Delay(3500); toast = null; StateHasChanged(); }
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try { roles = await Portal.Roles() ?? []; }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+
+    async Task LoadRights()
+    {
+        rights = null; saveError = null;
+        if (roleId == "") return;
+        try { rights = await Portal.Rights(roleId); }
+        catch (Exception ex) { saveError = ex.Message; }
+    }
+
+    void NewRole() { newId = newName = newCopy = ""; newLevel = 1; newError = null; showNew = true; }
+
+    async Task CreateRole()
+    {
+        busy = true; newError = null;
+        var r = await Portal.CreateRole(new { roleId = newId, roleName = newName, authLevel = newLevel, copyFrom = string.IsNullOrEmpty(newCopy) ? null : newCopy });
+        busy = false;
+        if (!r.Ok) { newError = r.Error; return; }
+        showNew = false;
+        await Load();
+        roleId = newId.Trim();
+        await LoadRights();
+        _ = Toast("Role created");
+    }
+
+    async Task SaveRights()
+    {
+        busy = true; saveError = null;
+        var r = await Portal.SaveRights(roleId, rights!);
+        busy = false;
+        if (!r.Ok) { saveError = r.Error; return; }
+        _ = Toast("Access saved");
+    }
+}

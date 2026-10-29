@@ -1,0 +1,94 @@
+﻿@inherits LayoutComponentBase
+@implements IDisposable
+@inject AuthState Auth
+@inject HrmsClient Api
+@inject NavigationManager Nav
+
+@if (!Auth.IsSignedIn)
+{
+    <div class="boot"><span class="spinner"></span></div>
+}
+else
+{
+<div class="shell">
+    <NavMenu />
+
+    <div class="main">
+        <header class="topbar">
+            <span class="topbar-logo"><Icon Name="users" Size="20" /> HRMS</span>
+            <label class="search">
+                <Icon Name="search" Size="18" />
+                <input type="text" placeholder="Search employees, leave, attendance, projects..." />
+                <kbd>Ctrl + K</kbd>
+            </label>
+            <span class="grow"></span>
+            <NotificationBell />
+            <div class="user-wrap">
+                <button type="button" class="user" @onclick="() => menu = !menu">
+                    <Avatar Name="@Auth.User!.FullName" Size="40" />
+                    <div class="user-meta"><strong>@Fmt.Title(Auth.User!.FullName)</strong><small>@Auth.User!.RoleName</small></div>
+                    <Icon Name="chevron-down" Size="16" />
+                </button>
+                @if (menu)
+                {
+                    <div class="user-menu" @onclick="() => menu = false">
+                        <div class="um-head"><strong>@Fmt.Title(Auth.User!.FullName)</strong><small>@Auth.User!.UserId | @Auth.User!.RoleName</small><small>@Auth.User!.Company | FY @Auth.User!.FinYear</small></div>
+                        <button type="button" class="neutral" @onclick='() => Nav.NavigateTo("change-password")'><Icon Name="key" Size="16" /> Change password</button>
+                        <button type="button" @onclick="SignOut"><Icon Name="logout" Size="16" /> Sign out</button>
+                    </div>
+                }
+            </div>
+        </header>
+
+        <main class="content">
+            <ErrorBoundary @ref="boundary">
+                <ChildContent>@Body</ChildContent>
+                <ErrorContent Context="ex">
+                    <section class="card state error">
+                        <h3>Something went wrong on this screen</h3>
+                        <p>@ex.Message</p>
+                        <button type="button" class="btn primary" @onclick="() => boundary?.Recover()">Try again</button>
+                    </section>
+                </ErrorContent>
+            </ErrorBoundary>
+        </main>
+    </div>
+
+    <nav class="bottom-nav">
+        <NavLink href="" Match="NavLinkMatch.All"><Icon Name="home" /><span>Home</span></NavLink>
+        @if (Auth.Can(AuthState.EmployeeMaster)) { <NavLink href="employees"><Icon Name="users" /><span>Employees</span></NavLink> }
+        @if (Auth.Can(AuthState.Leave)) { <NavLink href="leave"><Icon Name="calendar" /><span>Leave</span></NavLink> }
+        @if (Auth.CanAny(AuthState.Grade, AuthState.Variable, AuthState.Loans, AuthState.Reports, "164")) { <NavLink href="payroll"><Icon Name="wallet" /><span>Payroll</span></NavLink> }
+        <button type="button" class="nav-out" @onclick="SignOut"><Icon Name="logout" /><span>Sign out</span></button>
+    </nav>
+</div>
+}
+
+@code {
+    ErrorBoundary? boundary;
+    bool menu;
+
+    protected override void OnInitialized()
+    {
+        Auth.Changed += OnAuthChanged;
+        if (!Auth.IsSignedIn) Nav.NavigateTo("login", replace: true);
+        else if (Auth.User!.MustChange) Nav.NavigateTo("change-password", replace: true);
+    }
+
+    void OnAuthChanged() => InvokeAsync(() =>
+    {
+        if (!Auth.IsSignedIn) Nav.NavigateTo("login", replace: true);
+        StateHasChanged();
+    });
+
+    async Task SignOut()
+    {
+        menu = false;
+        await Api.Logout();
+        Auth.SignOut();
+    }
+
+    public void Dispose() => Auth.Changed -= OnAuthChanged;
+
+    protected override void OnParametersSet() => boundary?.Recover();
+}

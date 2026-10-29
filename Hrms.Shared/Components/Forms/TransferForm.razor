@@ -1,0 +1,46 @@
+@inject HrmsClient Api
+
+<form class="form" @onsubmit="Save">
+    <div class="form-grid">
+        @if (FixedEmp is null)
+        {
+            <label class="field full"><span>Employee</span><EmployeePick @bind-Value="empCode" /></label>
+        }
+        <label class="field"><span>Transfer date</span><input type="date" @bind="date" /></label>
+        <label class="field"><span>From location</span><input type="text" list="dl-loc" @bind="from" placeholder="Current location" /></label>
+        <label class="field full"><span>To location</span><input type="text" list="dl-loc" @bind="to" /></label>
+    </div>
+    <datalist id="dl-loc">@foreach (var x in lookups?.Locations ?? []) { <option value="@x" /> }</datalist>
+    @if (error is not null) { <div class="form-error">@error</div> }
+    <div class="form-actions">
+        <button type="button" class="btn ghost" @onclick="OnCancel" disabled="@busy">Cancel</button>
+        <button type="submit" class="btn primary" disabled="@busy">@(busy ? "Saving..." : "Save transfer")</button>
+    </div>
+</form>
+
+@code {
+    [Parameter] public string? FixedEmp { get; set; }
+    [Parameter] public EventCallback OnSaved { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    string empCode = "", from = "", to = "";
+    DateTime date = DateTime.Today;
+    FormLookups? lookups;
+    bool busy;
+    string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        empCode = FixedEmp ?? "";
+        try { lookups = await Api.FormLookups(); } catch { }
+    }
+
+    async Task Save()
+    {
+        if (string.IsNullOrEmpty(empCode)) { error = "Select an employee."; return; }
+        busy = true; error = null;
+        var r = await Api.AddTransfer(empCode, new { date, fromLocation = from, toLocation = to });
+        busy = false;
+        if (r.Ok) await OnSaved.InvokeAsync(); else error = r.Error;
+    }
+}

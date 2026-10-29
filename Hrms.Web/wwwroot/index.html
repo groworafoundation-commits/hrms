@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#1e1a73" />
+    <title>HRMS</title>
+    <base href="/" />
+    <link rel="stylesheet" href="_content/HrmsApp.Shared/css/app.css" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23534AB7'/%3E%3Ccircle cx='16' cy='12' r='5' fill='white'/%3E%3Cpath d='M7 26c1-5 5-8 9-8s8 3 9 8z' fill='white'/%3E%3C/svg%3E">
+    <style>
+        #boot { min-height: 100vh; display: grid; place-items: center; font-family: system-ui, sans-serif; color: #534AB7; }
+        #boot div { text-align: center; } #boot b { display: block; font-size: 22px; margin-bottom: 8px; }
+    </style>
+</head>
+<body>
+    <div id="app"><div id="boot"><div><b>HRMS</b>Loading your workspace...</div></div></div>
+
+    <div id="blazor-error-ui">
+        An unhandled error has occurred.
+        <a href="" class="reload">Reload</a>
+        <a class="dismiss">x</a>
+    </div>
+
+    <script>
+        window.hrms = {
+            get: function (key) { try { return localStorage.getItem('hrms.' + key); } catch (e) { return null; } },
+            set: function (key, value) { try { if (value === null || value === undefined) localStorage.removeItem('hrms.' + key); else localStorage.setItem('hrms.' + key, value); } catch (e) { } },
+            getSession: function () { try { return sessionStorage.getItem('hrms.token'); } catch (e) { return null; } },
+            setSession: function (token) { try { if (token) sessionStorage.setItem('hrms.token', token); else sessionStorage.removeItem('hrms.token'); } catch (e) { } },
+            download: function (name, content, type) {
+                var blob = new Blob([content], { type: type });
+                var a = document.createElement('a');
+                a.href = URL.createObjectURL(blob); a.download = name;
+                document.body.appendChild(a); a.click(); a.remove();
+                setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
+            }
+        };
+    </script>
+    <script src="_framework/blazor.webassembly.js"></script>
+</body>
+</html>

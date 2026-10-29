@@ -1,0 +1,57 @@
+@page "/leave/balances"
+@page "/payroll/leave/balances"
+@inject PortalClient Portal
+
+<PageTitle>Leave balances</PageTitle>
+
+<section class="greeting">
+    <div><h1>Leave balances</h1><p>Annual leave days for @(year), from the payroll ledger.</p></div>
+    <div class="page-actions"><a class="btn ghost" href="leave">Back to leave</a></div>
+</section>
+
+<section class="card toolbar">
+    <label class="search flat"><Icon Name="search" Size="18" /><input type="text" placeholder="Search employee" @bind="query" @bind:event="oninput" /></label>
+    <label class="check-inline"><input type="checkbox" @bind="onlyLow" /> Only balances below zero</label>
+</section>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    <section class="card">
+        <table class="tbl rows">
+            <thead><tr><th>Employee</th><th class="r">Brought forward</th><th class="r">Earned @year</th><th class="r">Used</th><th class="r">Ledger balance</th><th class="r hide-sm">Taken, not yet in payroll</th><th class="r hide-sm">Waiting approval</th><th class="r">Available</th></tr></thead>
+            <tbody>
+                @foreach (var b in Filtered)
+                {
+                    <tr>
+                        <td><div class="who"><Avatar Name="@b.Name" Size="30" /><div><strong>@Fmt.Title(b.Name)</strong><small>@b.EmpCode@(b.AsOfMonth is null ? " | no payroll yet" : " | to " + Fmt.MonthLabel(b.AsOfMonth))</small></div></div></td>
+                        <td class="r">@N(b.BroughtForward)</td><td class="r">@N(b.Earned)</td><td class="r">@N(b.Used)</td><td class="r">@N(b.Balance)</td>
+                        <td class="r hide-sm">@N(b.Unprocessed)</td><td class="r hide-sm">@N(b.Pending)</td>
+                        <td class="r"><b class="@(b.Available < 0 ? "neg" : "")">@N(b.Available)</b></td>
+                    </tr>
+                }
+                @if (Filtered.Count == 0) { <tr><td colspan="8" class="empty-row">No employees match.</td></tr> }
+            </tbody>
+        </table>
+        <p class="muted note">The ledger is the payroll's own running balance. It earns 2.5 days a month and carries over year to year. Only annual leave with salary uses it. Leave taken after the last processed month, and requests still waiting, are taken off to give what is available today. A negative balance means leave taken in advance.</p>
+    </section>
+</State>
+
+@code {
+    List<LeaveBalance> rows = [];
+    string query = "";
+    string? error;
+    bool loading = true, onlyLow;
+    int year = DateTime.Today.Year;
+
+    List<LeaveBalance> Filtered => rows.Where(b => (query == "" || b.Name.Contains(query, StringComparison.OrdinalIgnoreCase) || b.EmpCode.Contains(query, StringComparison.OrdinalIgnoreCase)) && (!onlyLow || b.Available < 0)).ToList();
+    static string N(decimal v) => v == 0 ? "0" : v.ToString("0.##");
+
+    protected override Task OnInitializedAsync() => Load();
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try { rows = await Portal.Balances() ?? []; if (rows.Count > 0) year = rows[0].Year; }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+}

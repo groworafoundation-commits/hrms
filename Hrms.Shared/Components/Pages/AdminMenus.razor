@@ -1,0 +1,111 @@
+@page "/admin/menus"
+@inject PortalClient Portal
+@inject AuthState Auth
+
+<PageTitle>Menus</PageTitle>
+
+<section class="greeting">
+    <div><h1>Menus</h1><p>The side menu items roles can be given. Grant them to a role under Roles and access.</p></div>
+    <div class="page-actions">@if (Auth.CanAdd("H204")) { <button type="button" class="btn primary" @onclick="New"><Icon Name="plus" Size="16" /> New menu</button> }</div>
+</section>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    <section class="card">
+        <table class="tbl rows">
+            <thead><tr><th>Menu</th><th>Opens</th><th class="r">Order</th><th>Shown</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var m in rows)
+                {
+                    <tr>
+                        <td><div class="who"><span class="report-icon"><Icon Name="@m.Icon" Size="18" /></span><div><strong>@m.Name</strong><small>@m.Id@(m.Custom ? " | custom" : " | built in")</small></div></div></td>
+                        <td>@m.Route</td>
+                        <td class="r">@m.Sequence</td>
+                        <td><StatusBadge Status="@(m.Active ? "Active" : "Inactive")" /></td>
+                        <td class="r"><div class="row-actions">
+                            @if (Auth.CanEdit("H204")) { <button type="button" class="btn ghost sm" @onclick="() => Edit(m)">Edit</button> }
+                            @if (m.Custom && Auth.CanDelete("H204")) { <button type="button" class="btn ghost sm" @onclick="() => { deleting = m; deleteError = null; }">Delete</button> }
+                        </div></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </section>
+</State>
+
+@if (form is not null)
+{
+    <Modal Title="@(editingId is null ? "New menu" : "Edit menu")" OnClose="() => form = null">
+        <form class="form" @onsubmit="Save">
+            <div class="form-grid">
+                <label class="field full"><span>Name</span><input type="text" @bind="form.Name" /></label>
+                <label class="field full"><span>Opens (page path such as my/leave, or a full link)</span><input type="text" @bind="form.Route" list="routes" /></label>
+                <datalist id="routes">@foreach (var r in KnownRoutes) { <option value="@r"></option> }</datalist>
+                <label class="field"><span>Icon</span>
+                    <select @bind="form.Icon">@foreach (var i in Icons) { <option value="@i">@i</option> }</select></label>
+                <label class="field"><span>Order</span><input type="number" @bind="form.Sequence" /></label>
+                <label class="field check full"><input type="checkbox" @bind="form.Active" /><span>Show this menu</span></label>
+            </div>
+            @if (formError is not null) { <div class="form-error">@formError</div> }
+            <div class="form-actions">
+                <button type="button" class="btn ghost" @onclick="() => form = null" disabled="@busy">Cancel</button>
+                <button type="submit" class="btn primary" disabled="@busy">@(busy ? "Saving..." : "Save")</button>
+            </div>
+        </form>
+    </Modal>
+}
+@if (deleting is not null)
+{
+    <ConfirmModal Title="Delete menu" Message="@($"Delete the menu '{deleting.Name}'? It is removed from every role.")" Busy="busy" Error="deleteError" OnConfirm="ConfirmDelete" OnCancel="() => deleting = null" />
+}
+@if (toast is not null) { <div class="toast">@toast</div> }
+
+@code {
+    class MenuForm { public string Name { get; set; } = ""; public string Route { get; set; } = ""; public string Icon { get; set; } = "grid"; public int Sequence { get; set; } = 30; public bool Active { get; set; } = true; }
+
+    static readonly string[] Icons = ["grid", "home", "users", "user", "calendar", "calendar-check", "wallet", "chart", "file", "check", "shield", "menu", "settings", "briefcase", "building", "bell", "award", "target", "megaphone", "clock"];
+    static readonly string[] KnownRoutes = ["my", "my/attendance", "admin/attendance", "admin/attendance/requests", "admin/attendance/setup", "admin/attendance/devices", "my/leave", "my/calendar", "my/payslips", "my/profile", "employees", "leave", "leave/calendar", "payroll", "payroll/reports", "admin/approvals", "admin/users", "admin/roles", "admin/menus"];
+
+    List<MenuDto> rows = [];
+    MenuForm? form;
+    MenuDto? deleting;
+    string? editingId, error, formError, deleteError, toast;
+    bool loading = true, busy;
+
+    protected override Task OnInitializedAsync() => Load();
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try { rows = await Portal.Menus() ?? []; }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+
+    void New() { editingId = null; formError = null; form = new MenuForm { Sequence = (rows.Count == 0 ? 0 : rows.Max(r => r.Sequence)) + 1 }; }
+    void Edit(MenuDto m) { editingId = m.Id; formError = null; form = new MenuForm { Name = m.Name, Route = m.Route, Icon = m.Icon, Sequence = m.Sequence, Active = m.Active }; }
+
+    async Task Toast(string message) { toast = message; StateHasChanged(); await Task.Delay(3500); toast = null; StateHasChanged(); }
+
+    async Task Save()
+    {
+        busy = true; formError = null;
+        var body = new { name = form!.Name, route = form.Route, icon = form.Icon, sequence = form.Sequence, active = form.Active };
+        var r = editingId is null ? await Portal.CreateMenu(body) : await Portal.UpdateMenu(editingId, body);
+        busy = false;
+        if (!r.Ok) { formError = r.Error; return; }
+        form = null;
+        await Load();
+        _ = Toast("Menu saved. People see it the next time they sign in.");
+    }
+
+    async Task ConfirmDelete()
+    {
+        busy = true; deleteError = null;
+        var r = await Portal.DeleteMenu(deleting!.Id);
+        busy = false;
+        if (!r.Ok) { deleteError = r.Error; return; }
+        deleting = null;
+        await Load();
+        _ = Toast("Menu deleted");
+    }
+}

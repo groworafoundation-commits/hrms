@@ -1,0 +1,228 @@
+@page "/admin/attendance/setup"
+@inject AttendanceClient Api
+@inject AuthState Auth
+
+<PageTitle>Shifts and holidays</PageTitle>
+
+<section class="greeting"><div><h1>Shifts and holidays</h1><p>Working hours, who works which shift, and the company holiday calendar.</p></div></section>
+
+<nav class="subnav">
+    <button type="button" class="subnav-item @(tab == "shifts" ? "active" : "")" @onclick='() => tab = "shifts"'>Shifts</button>
+    <button type="button" class="subnav-item @(tab == "assign" ? "active" : "")" @onclick='() => tab = "assign"'>Assign shifts</button>
+    <button type="button" class="subnav-item @(tab == "holidays" ? "active" : "")" @onclick='() => tab = "holidays"'>Holidays</button>
+</nav>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    @if (tab == "shifts")
+    {
+        <div class="page-actions">@if (Auth.CanAdd("H207")) { <button type="button" class="btn primary" @onclick="NewShift"><Icon Name="plus" Size="16" /> New shift</button> }</div>
+        <section class="card">
+            <table class="tbl rows">
+                <thead><tr><th>Shift</th><th>Hours</th><th class="r">Grace</th><th class="r">Full day</th><th class="r">Half day</th><th>Weekly off</th><th>Status</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var s in shifts)
+                    {
+                        <tr>
+                            <td><strong>@s.Name</strong>@if (s.IsDefault) { <span class="badge badge-active"> default</span> }</td>
+                            <td>@Att.Hhmm(s.StartTime) - @Att.Hhmm(s.EndTime)</td>
+                            <td class="r">@s.GraceMinutes min</td><td class="r">@Att.Hm(s.FullDayMinutes)</td><td class="r">@Att.Hm(s.HalfDayMinutes)</td>
+                            <td>@(string.IsNullOrEmpty(s.WeeklyOffs) ? "-" : s.WeeklyOffs)</td>
+                            <td><StatusBadge Status="@(s.Active ? "Active" : "Inactive")" /></td>
+                            <td class="r">@if (Auth.CanEdit("H207")) { <button type="button" class="btn ghost sm" @onclick="() => EditShift(s)">Edit</button> }</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </section>
+    }
+
+    @if (tab == "assign")
+    {
+        <section class="card toolbar">
+            <label class="search flat"><Icon Name="search" Size="18" /><input type="text" placeholder="Search employee" @bind="query" @bind:event="oninput" /></label>
+            <select class="sel" @bind="assignShift"><option value="0">Choose a shift</option>@foreach (var s in shifts.Where(x => x.Active)) { <option value="@s.Id">@s.Name (@Att.Hhmm(s.StartTime)-@Att.Hhmm(s.EndTime))</option> }</select>
+            <input class="sel" type="date" @bind="assignFrom" />
+            @if (Auth.CanEdit("H207")) { <button type="button" class="btn primary" disabled="@(busy || picked.Count == 0 || assignShift == 0)" @onclick="DoAssign">Assign to @picked.Count selected</button> }
+        </section>
+        @if (assignError is not null) { <div class="form-error">@assignError</div> }
+        <section class="card">
+            <table class="tbl rows">
+                <thead><tr><th><input type="checkbox" checked="@(EmpFiltered.Count > 0 && EmpFiltered.All(e => picked.Contains(e.EmpCode)))" @onchange="TogglePage" /></th><th>Employee</th><th>Designation</th><th>Current shift</th></tr></thead>
+                <tbody>
+                    @foreach (var e in EmpFiltered)
+                    {
+                        <tr>
+                            <td><input type="checkbox" checked="@picked.Contains(e.EmpCode)" @onchange="x => Pick(e.EmpCode, (bool)x.Value!)" /></td>
+                            <td><strong>@Fmt.Title(e.Name)</strong><small class="muted"> @e.EmpCode</small></td>
+                            <td>@e.Designation</td><td>@e.Shift</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </section>
+    }
+
+    @if (tab == "holidays")
+    {
+        <section class="card toolbar">
+            <button type="button" class="icon-btn sm bordered" aria-label="Previous year" @onclick="() => MoveYear(-1)"><Icon Name="chevron-right" Size="16" /></button>
+            <strong>@year</strong>
+            <button type="button" class="icon-btn sm bordered next" aria-label="Next year" @onclick="() => MoveYear(1)"><Icon Name="chevron-right" Size="16" /></button>
+            <span class="grow"></span>
+            @if (Auth.CanAdd("H207")) { <button type="button" class="btn primary" @onclick="NewHoliday"><Icon Name="plus" Size="16" /> Add holiday</button> }
+        </section>
+        <section class="card">
+            <table class="tbl rows">
+                <thead><tr><th>Date</th><th>Holiday</th><th>Type</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var h in holidays)
+                    {
+                        <tr>
+                            <td>@h.HolidayDate.ToString("ddd, d MMM yyyy")</td><td><strong>@h.Name</strong></td><td>@h.Kind</td>
+                            <td class="r"><div class="row-actions">
+                                @if (Auth.CanEdit("H207")) { <button type="button" class="btn ghost sm" @onclick="() => EditHoliday(h)">Edit</button> }
+                                @if (Auth.CanDelete("H207")) { <button type="button" class="btn ghost sm" @onclick="() => { deleting = h; deleteError = null; }">Delete</button> }
+                            </div></td>
+                        </tr>
+                    }
+                    @if (holidays.Count == 0) { <tr><td colspan="4" class="empty-row">No holidays set for @year.</td></tr> }
+                </tbody>
+            </table>
+        </section>
+    }
+</State>
+
+@if (shiftForm is not null)
+{
+    <Modal Title="@(shiftId is null ? "New shift" : "Edit shift")" OnClose="() => shiftForm = null">
+        <form class="form" @onsubmit="SaveShift">
+            <div class="form-grid">
+                <label class="field full"><span>Name</span><input type="text" @bind="shiftForm.Name" /></label>
+                <label class="field"><span>Starts</span><input type="time" value="@shiftForm.Start" @onchange='e => shiftForm.Start = e.Value?.ToString() ?? ""' /></label>
+                <label class="field"><span>Ends</span><input type="time" value="@shiftForm.End" @onchange='e => shiftForm.End = e.Value?.ToString() ?? ""' /></label>
+                <label class="field"><span>Grace (minutes late allowed)</span><input type="number" min="0" max="180" @bind="shiftForm.Grace" /></label>
+                <label class="field"><span>Weekly off (for example Fri,Sat)</span><input type="text" @bind="shiftForm.Offs" /></label>
+                <label class="field"><span>Full day (minutes)</span><input type="number" min="30" @bind="shiftForm.Full" /></label>
+                <label class="field"><span>Half day (minutes)</span><input type="number" min="15" @bind="shiftForm.Half" /></label>
+                <label class="field check"><input type="checkbox" @bind="shiftForm.IsDefault" /><span>Default shift for everyone not assigned one</span></label>
+                <label class="field check"><input type="checkbox" @bind="shiftForm.Active" /><span>Active</span></label>
+            </div>
+            @if (formError is not null) { <div class="form-error">@formError</div> }
+            <div class="form-actions">
+                <button type="button" class="btn ghost" @onclick="() => shiftForm = null" disabled="@busy">Cancel</button>
+                <button type="submit" class="btn primary" disabled="@busy">@(busy ? "Saving..." : "Save shift")</button>
+            </div>
+        </form>
+    </Modal>
+}
+@if (holidayForm is not null)
+{
+    <Modal Title="@(holidayId is null ? "Add holiday" : "Edit holiday")" OnClose="() => holidayForm = null">
+        <form class="form" @onsubmit="SaveHoliday">
+            <div class="form-grid">
+                <label class="field"><span>Date</span><input type="date" @bind="holidayForm.Date" /></label>
+                <label class="field"><span>Type</span><select @bind="holidayForm.Kind"><option>Public</option><option>Company</option><option>Optional</option></select></label>
+                <label class="field full"><span>Name</span><input type="text" @bind="holidayForm.Name" /></label>
+            </div>
+            @if (formError is not null) { <div class="form-error">@formError</div> }
+            <div class="form-actions">
+                <button type="button" class="btn ghost" @onclick="() => holidayForm = null" disabled="@busy">Cancel</button>
+                <button type="submit" class="btn primary" disabled="@busy">@(busy ? "Saving..." : "Save holiday")</button>
+            </div>
+        </form>
+    </Modal>
+}
+@if (deleting is not null)
+{
+    <ConfirmModal Title="Delete holiday" Message="@($"Delete '{deleting.Name}' on {deleting.HolidayDate:d MMM yyyy}?")" Busy="busy" Error="deleteError" OnConfirm="ConfirmDelete" OnCancel="() => deleting = null" />
+}
+@if (toast is not null) { <div class="toast">@toast</div> }
+
+@code {
+    class ShiftForm { public string Name { get; set; } = ""; public string Start { get; set; } = "09:00"; public string End { get; set; } = "18:00"; public int Grace { get; set; } = 10; public int Full { get; set; } = 480; public int Half { get; set; } = 240; public string Offs { get; set; } = "Sun"; public bool IsDefault { get; set; } public bool Active { get; set; } = true; }
+    class HolidayForm { public DateTime Date { get; set; } = DateTime.Today; public string Name { get; set; } = ""; public string Kind { get; set; } = "Public"; }
+
+    List<ShiftDto> shifts = [];
+    List<EmpShift> employees = [];
+    List<HolidayDto> holidays = [];
+    HashSet<string> picked = [];
+    ShiftForm? shiftForm;
+    HolidayForm? holidayForm;
+    HolidayDto? deleting;
+    int? shiftId, holidayId;
+    int year = DateTime.Today.Year, assignShift;
+    DateTime assignFrom = DateTime.Today;
+    string tab = "shifts", query = "";
+    bool loading = true, busy;
+    string? error, formError, deleteError, assignError, toast;
+
+    List<EmpShift> EmpFiltered => employees.Where(e => query == "" || e.Name.Contains(query, StringComparison.OrdinalIgnoreCase) || e.EmpCode.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
+
+    protected override Task OnInitializedAsync() => Load();
+
+    async Task Toast(string message) { toast = message; StateHasChanged(); await Task.Delay(3500); toast = null; StateHasChanged(); }
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try
+        {
+            shifts = await Api.Shifts() ?? [];
+            employees = await Api.SetupEmployees() ?? [];
+            holidays = await Api.Holidays(year) ?? [];
+        }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+
+    // shifts
+    void NewShift() { shiftId = null; formError = null; shiftForm = new ShiftForm(); }
+    void EditShift(ShiftDto s) { shiftId = s.Id; formError = null; shiftForm = new ShiftForm { Name = s.Name, Start = Att.Hhmm(s.StartTime), End = Att.Hhmm(s.EndTime), Grace = s.GraceMinutes, Full = s.FullDayMinutes, Half = s.HalfDayMinutes, Offs = s.WeeklyOffs, IsDefault = s.IsDefault, Active = s.Active }; }
+
+    async Task SaveShift()
+    {
+        busy = true; formError = null;
+        var f = shiftForm!;
+        var r = await Api.SaveShift(shiftId, new { name = f.Name, start = f.Start, end = f.End, graceMinutes = f.Grace, fullDayMinutes = f.Full, halfDayMinutes = f.Half, weeklyOffs = f.Offs, isDefault = f.IsDefault, active = f.Active });
+        busy = false;
+        if (!r.Ok) { formError = r.Error; return; }
+        shiftForm = null; await Load(); _ = Toast("Shift saved");
+    }
+
+    // assignment
+    void Pick(string code, bool on) { if (on) picked.Add(code); else picked.Remove(code); }
+    void TogglePage(ChangeEventArgs e) { var on = (bool)e.Value!; foreach (var x in EmpFiltered) { if (on) picked.Add(x.EmpCode); else picked.Remove(x.EmpCode); } }
+
+    async Task DoAssign()
+    {
+        busy = true; assignError = null;
+        var r = await Api.Assign(picked.ToList(), assignShift, assignFrom);
+        busy = false;
+        if (!r.Ok) { assignError = r.Error; return; }
+        var n = picked.Count; picked.Clear(); await Load(); _ = Toast($"Shift assigned to {n} employee{(n == 1 ? "" : "s")}");
+    }
+
+    // holidays
+    async Task MoveYear(int by) { year += by; holidays = await Api.Holidays(year) ?? []; }
+    void NewHoliday() { holidayId = null; formError = null; holidayForm = new HolidayForm { Date = new DateTime(year, Math.Min(DateTime.Today.Month, 12), Math.Min(DateTime.Today.Day, 28)) }; }
+    void EditHoliday(HolidayDto h) { holidayId = h.Id; formError = null; holidayForm = new HolidayForm { Date = h.HolidayDate, Name = h.Name, Kind = h.Kind }; }
+
+    async Task SaveHoliday()
+    {
+        busy = true; formError = null;
+        var f = holidayForm!;
+        var r = await Api.SaveHoliday(holidayId, new { date = f.Date, name = f.Name, kind = f.Kind });
+        busy = false;
+        if (!r.Ok) { formError = r.Error; return; }
+        year = f.Date.Year; holidayForm = null; holidays = await Api.Holidays(year) ?? []; _ = Toast("Holiday saved");
+    }
+
+    async Task ConfirmDelete()
+    {
+        busy = true; deleteError = null;
+        var r = await Api.DeleteHoliday(deleting!.Id);
+        busy = false;
+        if (!r.Ok) { deleteError = r.Error; return; }
+        deleting = null; holidays = await Api.Holidays(year) ?? []; _ = Toast("Holiday deleted");
+    }
+}

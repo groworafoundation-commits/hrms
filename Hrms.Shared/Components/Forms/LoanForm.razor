@@ -1,0 +1,47 @@
+@inject HrmsClient Api
+
+<form class="form" @onsubmit="Save">
+    <div class="form-grid">
+        <label class="field full"><span>Employee</span><EmployeePick @bind-Value="empCode" Disabled="@(FixedEmp is not null)" /></label>
+        <label class="field"><span>Type</span>
+            <select @bind="type"><option value="LOAN">Loan</option><option value="ADVAMT">Advance</option></select></label>
+        <label class="field"><span>Date</span><input type="date" @bind="date" /></label>
+        <label class="field"><span>Amount</span><input type="number" step="0.01" min="0" @bind="amount" /></label>
+        <label class="field"><span>Number of installments</span><input type="number" min="1" max="60" @bind="months" /></label>
+        <label class="field full"><span>First recovery date</span><input type="date" @bind="firstRecovery" /></label>
+        <label class="field full"><span>Remarks</span><input type="text" @bind="remarks" /></label>
+    </div>
+    @if (amount > 0 && months > 0)
+    {
+        <div class="form-total">@months installment@(months == 1 ? "" : "s") of about <b>@Fmt.Money2(Math.Round(amount / months, 2))</b>, from @Fmt.Date(firstRecovery) to @Fmt.Date(firstRecovery.AddMonths(Math.Max(0, months - 1)))</div>
+    }
+    @if (error is not null) { <div class="form-error">@error</div> }
+    <div class="form-actions">
+        <button type="button" class="btn ghost" @onclick="OnCancel" disabled="@busy">Cancel</button>
+        <button type="submit" class="btn primary" disabled="@busy">@(busy ? "Saving..." : "Save " + (type == "LOAN" ? "loan" : "advance"))</button>
+    </div>
+</form>
+
+@code {
+    [Parameter] public string? FixedEmp { get; set; }
+    [Parameter] public EventCallback OnSaved { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    string empCode = "", type = "LOAN", remarks = "";
+    DateTime date = DateTime.Today, firstRecovery = DateTime.Today;
+    decimal amount;
+    int months = 1;
+    bool busy;
+    string? error;
+
+    protected override void OnInitialized() => empCode = FixedEmp ?? "";
+
+    async Task Save()
+    {
+        if (string.IsNullOrEmpty(empCode)) { error = "Select an employee."; return; }
+        busy = true; error = null;
+        var r = await Api.AddLoan(new { empCode, type, date, amount, months, firstRecovery, remarks });
+        busy = false;
+        if (r.Ok) await OnSaved.InvokeAsync(); else error = r.Error;
+    }
+}

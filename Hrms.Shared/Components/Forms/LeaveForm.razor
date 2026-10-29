@@ -1,0 +1,70 @@
+@inject HrmsClient Api
+
+<form class="form" @onsubmit="Save">
+    <div class="form-grid">
+        <label class="field full"><span>Employee</span><EmployeePick @bind-Value="empCode" Disabled="@(Existing is not null || FixedEmp is not null)" /></label>
+        <label class="field"><span>Leave type</span>
+            <select @bind="type">
+                <option value="">Select</option>
+                @foreach (var t in Types) { <option value="@t.Code">@t.Name</option> }
+            </select></label>
+        <label class="field"><span>Applied on</span><input type="date" @bind="applied" /></label>
+        <label class="field"><span>From</span><input type="date" value="@from.ToString("yyyy-MM-dd")" @onchange="FromChanged" /></label>
+        <label class="field"><span>To</span><input type="date" value="@to.ToString("yyyy-MM-dd")" @onchange="ToChanged" /></label>
+        <label class="field"><span>Number of days</span><input type="number" step="0.5" min="0.5" @bind="days" /></label>
+        <label class="field"><span>Rejoining date</span><input type="date" @bind="rejoining" /></label>
+        <label class="field check full"><input type="checkbox" @bind="salaryWithout" /><span>Pay leave salary without leave</span></label>
+    </div>
+    @if (error is not null) { <div class="form-error">@error</div> }
+    <div class="form-actions">
+        <button type="button" class="btn ghost" @onclick="OnCancel" disabled="@busy">Cancel</button>
+        <button type="submit" class="btn primary" disabled="@busy">@(busy ? "Saving..." : Existing is null ? "Save leave" : "Save changes")</button>
+    </div>
+</form>
+
+@code {
+    [Parameter] public LeaveRow? Existing { get; set; }
+    [Parameter] public string? FixedEmp { get; set; }
+    [Parameter] public DateTime? InitialFrom { get; set; }
+    [Parameter] public DateTime? InitialTo { get; set; }
+    [Parameter] public EventCallback OnSaved { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    static readonly (string Code, string Name)[] Types =
+    [
+        ("LVE", "Annual leave"), ("ALVESAL", "Annual leave with salary"), ("UPL", "Unpaid leave"), ("EMRLVE", "Emergency leave"), ("MTRLVE", "Maternity leave"),
+    ];
+
+    string empCode = "", type = "";
+    DateTime applied = DateTime.Today, from = DateTime.Today, to = DateTime.Today, rejoining = DateTime.Today.AddDays(1);
+    decimal days = 1;
+    bool salaryWithout, busy;
+    string? error;
+
+    protected override void OnInitialized()
+    {
+        empCode = FixedEmp ?? "";
+        if (Existing is null)
+        {
+            if (InitialFrom is not null) { from = InitialFrom.Value; to = (InitialTo ?? InitialFrom).Value; Recalc(); }
+            return;
+        }
+        empCode = Existing.EmpCode; type = Existing.LeaveType; from = Existing.FromDate; to = Existing.ToDate; days = Existing.Days;
+        applied = Existing.Applied ?? DateTime.Today; rejoining = Existing.Rejoining ?? Existing.ToDate.AddDays(1); salaryWithout = Existing.SalaryWithoutLeave;
+    }
+
+    void Recalc() { days = Math.Max(1, (decimal)(to.Date - from.Date).TotalDays + 1); rejoining = to.AddDays(1); }
+
+    void FromChanged(ChangeEventArgs e) { if (DateTime.TryParse(e.Value?.ToString(), out var d)) { from = d; if (to < from) to = from; Recalc(); } }
+    void ToChanged(ChangeEventArgs e) { if (DateTime.TryParse(e.Value?.ToString(), out var d)) { to = d; Recalc(); } }
+
+    async Task Save()
+    {
+        if (string.IsNullOrEmpty(empCode)) { error = "Select an employee."; return; }
+        busy = true; error = null;
+        var body = new { empCode, leaveType = type, fromDate = from, toDate = to, applied, rejoining, days, salaryWithoutLeave = salaryWithout };
+        var r = Existing is null ? await Api.AddLeave(body) : await Api.UpdateLeave(Existing.Id, body);
+        busy = false;
+        if (r.Ok) await OnSaved.InvokeAsync(); else error = r.Error;
+    }
+}

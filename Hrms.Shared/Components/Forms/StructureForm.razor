@@ -1,0 +1,42 @@
+@inject HrmsClient Api
+
+<form class="form" @onsubmit="Save">
+    <p class="form-note">Fixed pay is saved from the effective date and replaces the previous amounts from that day on.</p>
+    <div class="form-grid">
+        <label class="field full"><span>Effective date</span><input type="date" @bind="effective" /></label>
+        @foreach (var h in heads)
+        {
+            <label class="field"><span>@h.Name</span><input type="number" step="0.01" min="0" @bind="h.Amount" /></label>
+        }
+    </div>
+    <div class="form-total">Total fixed pay <b>@Fmt.Money2(heads.Where(h => h.Code != "FixedWPS").Sum(h => h.Amount))</b></div>
+    @if (error is not null) { <div class="form-error">@error</div> }
+    <div class="form-actions">
+        <button type="button" class="btn ghost" @onclick="OnCancel" disabled="@busy">Cancel</button>
+        <button type="submit" class="btn primary" disabled="@busy">@(busy ? "Saving..." : "Save salary structure")</button>
+    </div>
+</form>
+
+@code {
+    [Parameter, EditorRequired] public string EmpCode { get; set; } = "";
+    [Parameter] public EventCallback OnSaved { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    List<HeadValue> heads = [];
+    DateTime effective = DateTime.Today;
+    bool busy;
+    string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { heads = (await Api.StructureOf(EmpCode))?.Current ?? []; } catch (Exception ex) { error = ex.Message; }
+    }
+
+    async Task Save()
+    {
+        busy = true; error = null;
+        var r = await Api.SaveStructure(EmpCode, new { effectiveDate = effective, heads = heads.Select(h => new { code = h.Code, amount = h.Amount }) });
+        busy = false;
+        if (r.Ok) await OnSaved.InvokeAsync(); else error = r.Error;
+    }
+}

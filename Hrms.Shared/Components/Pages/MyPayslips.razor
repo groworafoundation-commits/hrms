@@ -1,0 +1,99 @@
+@page "/my/payslips"
+@inject PortalClient Portal
+@inject HrmsClient Api
+@inject AuthState Auth
+@inject IJSRuntime Js
+@inject IHostServices Host
+
+<PageTitle>My payslips</PageTitle>
+
+<section class="greeting no-print">
+    <div><h1>My payslips</h1><p>Your pay for each processed month.</p></div>
+    <div class="page-actions">
+        @if (result is not null && Auth.CanPrint("H104"))
+        {
+            <button type="button" class="btn ghost" @onclick="Print">Print</button>
+            <button type="button" class="btn primary" @onclick="SavePdf" disabled="@busyPdf">@(busyPdf ? "Creating PDF..." : "Save PDF")</button>
+        }
+    </div>
+</section>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    <div class="no-print">
+        <section class="card">
+            <table class="tbl rows">
+                <thead><tr><th>Month</th><th class="r">Worked days</th><th class="r">Additions</th><th class="r">Deductions</th><th class="r">Net pay</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var p in slips)
+                    {
+                        <tr class="@(p.Month == selected ? "sel" : "")">
+                            <td><strong>@Fmt.MonthLabel(p.Month)</strong></td>
+                            <td class="r">@p.WorkedDays.ToString("0.#")</td>
+                            <td class="r">@Fmt.Money(p.Addition)</td>
+                            <td class="r">@Fmt.Money(p.Deduction)</td>
+                            <td class="r"><b>@Fmt.Money(p.Net)</b></td>
+                            <td class="r"><button type="button" class="btn ghost sm" @onclick="() => Open(p.Month)">View payslip</button></td>
+                        </tr>
+                    }
+                    @if (slips.Count == 0) { <tr><td colspan="6" class="empty-row">No payslips have been processed for you yet.</td></tr> }
+                </tbody>
+            </table>
+        </section>
+    </div>
+
+    @if (result is not null)
+    {
+        <div class="paper-wrap"><ReportSheet Result="result" Company="company" Layout="layout" /></div>
+    }
+</State>
+
+@if (saved is not null)
+{
+    <div class="toast no-print"><span>@saved</span><button type="button" class="toast-btn" @onclick="() => saved = null">Close</button></div>
+}
+
+@code {
+    List<PayslipRow> slips = [];
+    ReportResult? result;
+    CompanyInfo? company;
+    readonly ReportLayout layout = ReportLayouts.For("payslip");
+    string? selected, error, saved;
+    bool loading = true, busyPdf;
+
+    protected override Task OnInitializedAsync() => Load();
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try
+        {
+            slips = await Portal.MyPayslips() ?? [];
+            company ??= await Api.Company();
+        }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+        if (error is null && slips.Count > 0 && selected is null) await Open(slips[0].Month);
+    }
+
+    async Task Open(string month)
+    {
+        selected = month; error = null;
+        try { result = await Portal.MyPayslip(month); }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+    }
+
+    async Task Print() => await Js.InvokeVoidAsync("print");
+
+    async Task SavePdf()
+    {
+        if (result is null) return;
+        busyPdf = true; saved = null;
+        try
+        {
+            var r = await Host.SavePdf($"payslip-{selected}-{DateTime.Now:HHmmss}.pdf", layout.Landscape, result.Title, $"{company?.Name}  |  {result.Title}");
+            saved = r.Message;
+        }
+        catch (Exception ex) { saved = "Couldn't create the PDF: " + ex.Message; }
+        busyPdf = false;
+    }
+}

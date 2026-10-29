@@ -1,0 +1,253 @@
+@page "/admin/attendance/devices"
+@inject AttendanceClient Api
+@inject AuthState Auth
+
+<PageTitle>Attendance devices</PageTitle>
+
+<section class="greeting">
+    <div><h1>Attendance devices</h1><p>Punching machines, who is who on each machine, and every punch they send.</p></div>
+    <div class="page-actions">@if (tab == "machines" && Auth.CanAdd("H208")) { <button type="button" class="btn primary" @onclick="NewDevice"><Icon Name="plus" Size="16" /> Register machine</button> }</div>
+</section>
+
+<nav class="subnav">
+    <button type="button" class="subnav-item @(tab == "machines" ? "active" : "")" @onclick='() => SetTab("machines")'>Machines</button>
+    <button type="button" class="subnav-item @(tab == "link" ? "active" : "")" @onclick='() => SetTab("link")'>Machine numbers@(maps?.Unmapped.Count > 0 ? $" ({maps.Unmapped.Count} unlinked)" : "")</button>
+    <button type="button" class="subnav-item @(tab == "log" ? "active" : "")" @onclick='() => SetTab("log")'>Punch log</button>
+    <button type="button" class="subnav-item @(tab == "sim" ? "active" : "")" @onclick='() => SetTab("sim")'>Test simulator</button>
+</nav>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    @if (tab == "machines")
+    {
+        <section class="card">
+            <table class="tbl rows">
+                <thead><tr><th>Machine</th><th>Serial</th><th>Status</th><th>Last heard</th><th class="r">Punches today</th><th class="r hide-sm">Unlinked</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var d in devices)
+                    {
+                        <tr>
+                            <td><strong>@d.Name</strong><small class="muted"> @d.Location</small></td>
+                            <td>@d.Serial</td>
+                            <td><span class="att-status sm @StatusCss(d)">@StatusText(d)</span>@if (d.SkewSeconds is { } sk && Math.Abs(sk) > 600) { <small class="muted"> clock off by @(Math.Abs(sk) / 60) min</small> }</td>
+                            <td>@(d.LastSeen is null ? "Never" : Ago(d.LastSeen.Value))</td>
+                            <td class="r">@d.PunchesToday</td>
+                            <td class="r hide-sm">@(d.Unmatched > 0 ? d.Unmatched.ToString() : "-")</td>
+                            <td class="r">@if (Auth.CanEdit("H208")) { <button type="button" class="btn @(!d.Active ? "primary" : "ghost") sm" @onclick="() => EditDevice(d)">@(!d.Active ? "Review and approve" : "Edit")</button> }</td>
+                        </tr>
+                    }
+                    @if (devices.Count == 0) { <tr><td colspan="7" class="empty-row">No machine has contacted the server yet.</td></tr> }
+                </tbody>
+            </table>
+        </section>
+        <section class="card">
+            <div class="card-head"><h3>Connecting a real machine</h3></div>
+            <ol class="how">
+                <li>On the machine open the cloud / ADMS server settings (ZKTeco: Menu, Comm., Cloud Server Setting).</li>
+                <li>Set the server address to this computer's network address and the port to <b>5080</b>. HTTP, no proxy.</li>
+                <li>The machine appears above as "Waiting for approval". Approve it and give it a name.</li>
+                <li>Link each machine number to an employee on the Machine numbers tab. A number that is already an employee code works without linking.</li>
+            </ol>
+            <p class="muted note">Punches are stamped with the time the machine reports, so keep the machine clock right. In and out is worked out here: the first punch of the day is In and each next one flips it.</p>
+        </section>
+    }
+
+    @if (tab == "link" && maps is not null)
+    {
+        @if (maps.Unmapped.Count > 0)
+        {
+            <section class="card">
+                <div class="card-head"><h3>Machine numbers with no employee</h3>@if (Auth.CanEdit("H208")) { <button type="button" class="btn ghost sm" @onclick="DoReprocess" disabled="@busy">Replay these punches</button> }</div>
+                <table class="tbl rows">
+                    <thead><tr><th>Machine number</th><th class="r">Punches waiting</th><th>Last punch</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var u in maps.Unmapped)
+                        {
+                            <tr><td><strong>@u.Pin</strong></td><td class="r">@u.Punches</td><td>@u.LastPunch.ToString("d MMM yyyy HH:mm")</td><td class="r">@if (Auth.CanAdd("H208")) { <button type="button" class="btn ghost sm" @onclick='() => { linkPin = u.Pin; linkEmp = ""; }'>Link</button> }</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </section>
+        }
+        @if (Auth.CanAdd("H208"))
+        {
+            <section class="card toolbar">
+                <input class="sel" type="text" placeholder="Machine number" @bind="linkPin" />
+                <select class="sel" @bind="linkEmp"><option value="">Choose employee</option>@foreach (var e in employees) { <option value="@e.EmpCode">@Fmt.Title(e.Name) (@e.EmpCode)</option> }</select>
+                <button type="button" class="btn primary" @onclick="AddMap" disabled="@busy">Link</button>
+                @if (linkError is not null) { <span class="form-error">@linkError</span> }
+            </section>
+        }
+        <section class="card">
+            <table class="tbl rows">
+                <thead><tr><th>Machine number</th><th>Employee</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var m in maps.Maps)
+                    {
+                        <tr><td><strong>@m.Pin</strong></td><td>@Fmt.Title(m.Name ?? m.EmpCode) <small class="muted">@m.EmpCode</small></td>
+                            <td class="r">@if (Auth.CanDelete("H208")) { <button type="button" class="btn ghost sm" @onclick="() => RemoveMap(m)">Unlink</button> }</td></tr>
+                    }
+                    @if (maps.Maps.Count == 0) { <tr><td colspan="3" class="empty-row">No machine numbers are linked yet.</td></tr> }
+                </tbody>
+            </table>
+        </section>
+    }
+
+    @if (tab == "log")
+    {
+        <nav class="subnav">
+            @foreach (var r in new[] { "All", "Imported", "Unmatched", "Ignored" }) { <button type="button" class="subnav-item @(logFilter == r ? "active" : "")" @onclick="() => SetLog(r)">@r</button> }
+        </nav>
+        <section class="card">
+            <table class="tbl rows">
+                <thead><tr><th>Received</th><th>Machine</th><th>Number</th><th>Employee</th><th>Punch time</th><th class="hide-sm">Clock gap</th><th>Result</th></tr></thead>
+                <tbody>
+                    @foreach (var l in log)
+                    {
+                        <tr>
+                            <td>@l.ReceivedAt.ToString("d MMM HH:mm:ss")</td><td>@(l.DeviceName ?? l.DeviceSerial)</td><td>@l.Pin</td>
+                            <td>@(l.EmpCode is null ? "-" : Fmt.Title(l.Name ?? l.EmpCode))</td>
+                            <td>@l.PunchTime.ToString("d MMM HH:mm:ss")</td>
+                            <td class="hide-sm">@(l.SkewSeconds is null ? "-" : Math.Abs(l.SkewSeconds.Value) < 120 ? "in sync" : (l.SkewSeconds > 0 ? "sent late " : "ahead ") + Att.Short(Math.Abs(l.SkewSeconds.Value) / 60))</td>
+                            <td><span class="att-status sm @(l.Result == "Imported" ? "st-present" : l.Result == "Unmatched" ? "st-absent" : "st-off")">@l.Result</span></td>
+                        </tr>
+                    }
+                    @if (log.Count == 0) { <tr><td colspan="7" class="empty-row">Nothing received yet.</td></tr> }
+                </tbody>
+            </table>
+        </section>
+    }
+
+    @if (tab == "sim")
+    {
+        <section class="card">
+            <div class="card-head"><h3>Pretend to be a punching machine</h3></div>
+            <p class="muted note">This sends a punch to the server in exactly the format a ZKTeco machine uses, so you can test the whole chain without hardware. The punch is real: it appears in attendance.</p>
+            <div class="form-grid">
+                <label class="field"><span>Machine</span>
+                    <select @bind="simSerial"><option value="">Choose a machine</option>@foreach (var d in devices.Where(x => x.Active)) { <option value="@d.Serial">@d.Name (@d.Serial)</option> }</select></label>
+                <label class="field"><span>Machine number (or employee code)</span>
+                    <input type="text" @bind="simPin" list="pins" placeholder="For example 17" /></label>
+                <datalist id="pins">@foreach (var m in (maps?.Maps ?? [])) { <option value="@m.Pin">@m.Name</option> }</datalist>
+                <label class="field"><span>Punch time</span>
+                    <div class="seg"><button type="button" class="@(simNow ? "on" : "")" @onclick="() => simNow = true">Right now</button><button type="button" class="@(!simNow ? "on" : "")" @onclick="() => simNow = false">Choose time</button></div></label>
+                @if (!simNow) { <label class="field"><span>Date and time</span><input type="datetime-local" value="@simTime.ToString("yyyy-MM-ddTHH:mm")" @onchange="e => { if (DateTime.TryParse(e.Value?.ToString(), out var t)) simTime = t; }" /></label> }
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn ghost" @onclick="Hello" disabled="@busy">Simulate a new machine appearing</button>
+                <button type="button" class="btn primary" @onclick="SendSim" disabled="@(busy || simSerial == "" || simPin == "")">Send punch</button>
+            </div>
+            @if (simReply is not null) { <div class="@(simOk ? "form-ok" : "form-error")">Machine reply: @simReply</div> }
+        </section>
+    }
+</State>
+
+@if (form is not null)
+{
+    <Modal Title="@(deviceId is null ? "Register machine" : "Machine")" OnClose="() => form = null">
+        <form class="form" @onsubmit="SaveDevice">
+            <div class="form-grid">
+                <label class="field"><span>Serial number</span><input type="text" @bind="form.Serial" disabled="@(deviceId is not null)" /></label>
+                <label class="field"><span>Name</span><input type="text" @bind="form.Name" /></label>
+                <label class="field full"><span>Location</span><input type="text" @bind="form.Location" /></label>
+                <label class="field check full"><input type="checkbox" @bind="form.Active" /><span>Approved (the server accepts punches from this machine)</span></label>
+            </div>
+            @if (formError is not null) { <div class="form-error">@formError</div> }
+            <div class="form-actions">
+                <button type="button" class="btn ghost" @onclick="() => form = null" disabled="@busy">Cancel</button>
+                <button type="submit" class="btn primary" disabled="@busy">@(busy ? "Saving..." : "Save")</button>
+            </div>
+        </form>
+    </Modal>
+}
+@if (toast is not null) { <div class="toast">@toast</div> }
+
+@code {
+    class DeviceForm { public string Serial { get; set; } = ""; public string Name { get; set; } = ""; public string Location { get; set; } = ""; public bool Active { get; set; } = true; }
+
+    List<MachineInfo> devices = [];
+    MapsDto? maps;
+    List<DeviceLogInfo> log = [];
+    List<EmpShift> employees = [];
+    DeviceForm? form;
+    int? deviceId;
+    string tab = "machines", logFilter = "All", linkPin = "", linkEmp = "", simSerial = "", simPin = "";
+    bool loading = true, busy, simNow = true, simOk;
+    DateTime simTime = DateTime.Now;
+    string? error, formError, linkError, simReply, toast;
+
+    List<EmpShift> Employees => employees;
+
+    protected override Task OnInitializedAsync() => Load();
+
+    static string StatusText(MachineInfo d) => !d.Active ? "Waiting for approval" : d.LastSeen is { } t && (DateTime.Now - t).TotalMinutes < 10 ? "Online" : "Offline";
+    static string StatusCss(MachineInfo d) => !d.Active ? "st-missing" : d.LastSeen is { } t && (DateTime.Now - t).TotalMinutes < 10 ? "st-present" : "st-off";
+    static string Ago(DateTime t) { var m = (int)(DateTime.Now - t).TotalMinutes; return m < 1 ? "just now" : m < 60 ? m + " min ago" : m < 1440 ? m / 60 + " h ago" : t.ToString("d MMM HH:mm"); }
+
+    async Task Toast(string message) { toast = message; StateHasChanged(); await Task.Delay(3500); toast = null; StateHasChanged(); }
+    async Task SetTab(string t) { tab = t; await Load(); }
+    async Task SetLog(string r) { logFilter = r; await Load(); }
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try
+        {
+            devices = await Api.Devices() ?? [];
+            if (tab is "link" or "sim") { maps = await Api.DeviceMaps(); }
+            if (tab == "link" && employees.Count == 0) employees = await Api.SetupEmployees() ?? [];
+            if (tab == "log") log = await Api.DeviceLog(logFilter) ?? [];
+            if (tab == "machines") maps = await Api.DeviceMaps();
+        }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+
+    void NewDevice() { deviceId = null; formError = null; form = new DeviceForm(); }
+    void EditDevice(MachineInfo d) { deviceId = d.Id; formError = null; form = new DeviceForm { Serial = d.Serial, Name = d.Name.StartsWith("New machine ") ? "" : d.Name, Location = d.Location ?? "", Active = true }; }
+
+    async Task SaveDevice()
+    {
+        busy = true; formError = null;
+        var r = await Api.SaveDevice(deviceId, new { serial = form!.Serial, name = form.Name, location = form.Location, active = form.Active });
+        busy = false;
+        if (!r.Ok) { formError = r.Error; return; }
+        form = null; await Load(); _ = Toast("Machine saved");
+    }
+
+    async Task AddMap()
+    {
+        busy = true; linkError = null;
+        var r = await Api.AddMap(linkPin, linkEmp);
+        busy = false;
+        if (!r.Ok) { linkError = r.Error; return; }
+        linkPin = linkEmp = ""; await Load(); _ = Toast("Linked. Use Replay to import punches that were waiting.");
+    }
+
+    async Task RemoveMap(MapInfo m) { var r = await Api.DeleteMap(m.Id); if (r.Ok) { await Load(); _ = Toast("Unlinked"); } else error = r.Error; }
+
+    async Task DoReprocess()
+    {
+        busy = true;
+        var r = await Api.Reprocess();
+        busy = false;
+        await Load();
+        _ = Toast(r.Ok ? "Waiting punches replayed" : r.Error ?? "Replay failed");
+    }
+
+    async Task SendSim()
+    {
+        busy = true; simReply = null;
+        var (ok, reply) = await Api.SimulatePunch(simSerial, simPin.Trim(), simNow ? DateTime.Now : simTime);
+        busy = false; simOk = ok; simReply = reply;
+        devices = await Api.Devices() ?? devices;
+    }
+
+    async Task Hello()
+    {
+        busy = true;
+        var serial = "SIM" + DateTime.Now.ToString("HHmmss");
+        var (ok, reply) = await Api.SimulateHello(serial);
+        busy = false; simOk = ok; simReply = $"{reply} from new machine {serial}. It now waits for approval on the Machines tab.";
+        devices = await Api.Devices() ?? devices;
+    }
+}

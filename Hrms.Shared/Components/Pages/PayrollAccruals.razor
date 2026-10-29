@@ -1,0 +1,68 @@
+@page "/payroll/accruals"
+@inject HrmsClient Api
+
+<PageTitle>Accruals</PageTitle>
+
+<section class="greeting"><div><h1>Payroll</h1><p>Leave salary, annual leave and unpaid-leave accruals posted by payroll.</p></div></section>
+<PayrollNav />
+
+<section class="card toolbar">
+    <label class="search flat"><Icon Name="search" Size="18" /><input type="text" placeholder="Search employee" @bind="query" @bind:event="oninput" @bind:after="Debounced" /></label>
+</section>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    @if (report is not null)
+    {
+        <TypeCards Items="report.Summary" Selected="type" OnSelect="PickType" />
+        <section class="card">
+            <div class="scroll-x">
+            <table class="tbl">
+                <thead><tr><th>Employee</th><th>Type</th><th>Period</th><th class="r">Leave days</th><th class="r hide-sm">Paid days</th><th class="r">Amount</th><th class="hide-sm">Payment date</th></tr></thead>
+                <tbody>
+                    @foreach (var a in report.Rows)
+                    {
+                        <tr>
+                            <td><strong>@(string.IsNullOrWhiteSpace(a.EmpCode) ? "-" : Fmt.Title(a.Name ?? a.EmpCode))</strong><small>@a.EmpCode</small></td>
+                            <td>@a.TypeName</td>
+                            <td>@(a.FromDate is null || a.ToDate is null ? "-" : Fmt.Range(a.FromDate.Value, a.ToDate.Value))</td>
+                            <td class="r">@a.LeaveDays.ToString("0.#")</td>
+                            <td class="r hide-sm">@a.PaidDays.ToString("0.#")</td>
+                            <td class="r">@(a.Amount == 0 ? "-" : Fmt.Money2(a.Amount))</td>
+                            <td class="hide-sm">@Fmt.Date(a.PaymentDate ?? a.ProcessDate)</td>
+                        </tr>
+                    }
+                    @if (report.Rows.Count == 0) { <tr><td colspan="7" class="empty-row">No accruals found.</td></tr> }
+                </tbody>
+            </table>
+            </div>
+            <p class="muted note">Showing up to 400 most recent accruals.</p>
+        </section>
+    }
+</State>
+
+@code {
+    AccrualReport? report;
+    string query = "";
+    string? type, error;
+    bool loading = true;
+    CancellationTokenSource? debounce;
+
+    protected override Task OnInitializedAsync() => Load();
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try { report = await Api.Accruals(type, null, query); }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+
+    async Task PickType(string? t) { type = t; await Load(); }
+
+    async Task Debounced()
+    {
+        debounce?.Cancel(); debounce = new CancellationTokenSource();
+        try { await Task.Delay(300, debounce.Token); } catch (TaskCanceledException) { return; }
+        await Load();
+    }
+}

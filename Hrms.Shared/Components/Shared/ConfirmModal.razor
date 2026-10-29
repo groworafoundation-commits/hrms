@@ -1,0 +1,18 @@
+<Modal Title="@Title" Size="sm" OnClose="OnCancel">
+    <p class="confirm-text">@Message</p>
+    @if (Error is not null) { <div class="form-error">@Error</div> }
+    <div class="form-actions">
+        <button type="button" class="btn ghost" @onclick="OnCancel" disabled="@Busy">Cancel</button>
+        <button type="button" class="btn danger" @onclick="OnConfirm" disabled="@Busy">@(Busy ? "Working..." : ConfirmText)</button>
+    </div>
+</Modal>
+
+@code {
+    [Parameter] public string Title { get; set; } = "Are you sure?";
+    [Parameter] public string Message { get; set; } = "";
+    [Parameter] public string ConfirmText { get; set; } = "Delete";
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public string? Error { get; set; }
+    [Parameter] public EventCallback OnConfirm { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+}

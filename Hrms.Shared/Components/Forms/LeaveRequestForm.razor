@@ -1,0 +1,72 @@
+@inject PortalClient Portal
+
+<form class="form" @onsubmit="Save">
+    <div class="form-grid">
+        <label class="field full"><span>Leave type</span>
+            <select @bind="type">
+                <option value="">Select</option>
+                @foreach (var t in Types) { <option value="@t.Code">@t.Name</option> }
+            </select></label>
+        <label class="field"><span>From</span><input type="date" value="@from.ToString("yyyy-MM-dd")" @onchange="FromChanged" /></label>
+        <label class="field"><span>To</span><input type="date" value="@to.ToString("yyyy-MM-dd")" @onchange="ToChanged" /></label>
+        <label class="field"><span>Number of days</span><input type="number" step="0.5" min="0.5" @bind="days" /></label>
+        <label class="field"><span>Back at work on</span><input type="date" value="@to.AddDays(1).ToString("yyyy-MM-dd")" disabled /></label>
+        <label class="field full"><span>Send to for approval</span>
+            <select @bind="pushTo">
+                <option value="">Select who approves</option>
+                @foreach (var a in approvers) { <option value="@a.Id">@Fmt.Title(a.Name) | @a.RoleName (level @a.Level)</option> }
+            </select></label>
+    </div>
+    @if (type == "ALVESAL" && balance is { HasPayroll: true })
+    {
+        var after = balance.Available - days;
+        <p class="@(after < 0 ? "form-error" : "muted note")">Annual leave available: @balance.Available.ToString("0.##") days. @(after < 0 ? $"This request is {(-after).ToString("0.##")} days more than that, so it would be taken in advance." : $"After this request: {after.ToString("0.##")} days.")</p>
+    }
+    <p class="muted note">The person you choose can approve it or pass it to someone senior. You can cancel it until it is approved.</p>
+    @if (error is not null) { <div class="form-error">@error</div> }
+    <div class="form-actions">
+        <button type="button" class="btn ghost" @onclick="OnCancel" disabled="@busy">Cancel</button>
+        <button type="submit" class="btn primary" disabled="@busy">@(busy ? "Sending..." : "Send request")</button>
+    </div>
+</form>
+
+@code {
+    [Parameter] public DateTime? InitialFrom { get; set; }
+    [Parameter] public EventCallback OnSaved { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    static readonly (string Code, string Name)[] Types =
+    [
+        ("LVE", "Annual leave"), ("ALVESAL", "Annual leave with salary"), ("UPL", "Unpaid leave"), ("EMRLVE", "Emergency leave"), ("MTRLVE", "Maternity leave"),
+    ];
+
+    List<Approver> approvers = [];
+    LeaveBalance? balance;
+    string type = "", pushTo = "";
+    DateTime from = DateTime.Today.AddDays(1), to = DateTime.Today.AddDays(1);
+    decimal days = 1;
+    bool busy;
+    string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (InitialFrom is not null) { from = InitialFrom.Value; to = from; }
+        try { approvers = await Portal.Approvers() ?? []; } catch { }
+        try { balance = await Portal.MyBalance(); } catch { }
+        if (approvers.Count == 1) pushTo = approvers[0].Id;
+    }
+
+    void Recalc() => days = Math.Max(1, (decimal)(to.Date - from.Date).TotalDays + 1);
+    void FromChanged(ChangeEventArgs e) { if (DateTime.TryParse(e.Value?.ToString(), out var d)) { from = d; if (to < from) to = from; Recalc(); } }
+    void ToChanged(ChangeEventArgs e) { if (DateTime.TryParse(e.Value?.ToString(), out var d)) { to = d; Recalc(); } }
+
+    async Task Save()
+    {
+        if (string.IsNullOrEmpty(type)) { error = "Choose a leave type."; return; }
+        if (string.IsNullOrEmpty(pushTo)) { error = "Choose who approves this request."; return; }
+        busy = true; error = null;
+        var r = await Portal.RequestLeave(new { leaveType = type, fromDate = from, toDate = to, days, salaryWithoutLeave = false, pushTo });
+        busy = false;
+        if (r.Ok) await OnSaved.InvokeAsync(); else error = r.Error;
+    }
+}

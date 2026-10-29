@@ -1,0 +1,24 @@
+@if (Loading)
+{
+    <div class="state"><span class="spinner"></span><p>Loading from the ERP...</p></div>
+}
+else if (Error is not null)
+{
+    <div class="state error">
+        <Icon Name="x" Size="28" />
+        <h3>Couldn't reach the HRMS service</h3>
+        <p>@Error</p>
+        <button type="button" class="btn-ai" @onclick="OnRetry">Try again</button>
+    </div>
+}
+else
+{
+    @ChildContent
+}
+
+@code {
+    [Parameter] public bool Loading { get; set; }
+    [Parameter] public string? Error { get; set; }
+    [Parameter] public EventCallback OnRetry { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

@@ -1,0 +1,24 @@
+@page "/attendance"
+@page "/recruitment"
+@page "/performance"
+@page "/training"
+@page "/projects"
+@page "/assets"
+@page "/reports"
+@page "/company"
+@page "/settings"
+@page "/more"
+@inject NavigationManager Nav
+
+<section class="card empty">
+    <span class="kpi-icon tone-blue"><Icon Name="sparkles" Size="26" /></span>
+    <h2>@Title</h2>
+    <p>This screen is next on the roadmap.</p>
+    <a class="btn-ai" href="">Back to dashboard</a>
+</section>
+
+@code {
+    string Title => Nav.ToBaseRelativePath(Nav.Uri).Trim('/') is { Length: > 0 } p
+        ? char.ToUpper(p[0]) + p[1..]
+        : "";
+}

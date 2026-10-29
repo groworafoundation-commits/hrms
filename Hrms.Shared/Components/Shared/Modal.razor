@@ -1,0 +1,18 @@
+<div class="modal-back" @onclick="Close">
+    <div class="modal @Size" @onclick:stopPropagation role="dialog" aria-label="@Title">
+        <header class="modal-head">
+            <h3>@Title</h3>
+            <button type="button" class="icon-btn sm" aria-label="Close" @onclick="Close"><Icon Name="x" Size="18" /></button>
+        </header>
+        <div class="modal-body">@ChildContent</div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public string Title { get; set; } = "";
+    [Parameter] public string Size { get; set; } = "";
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    Task Close() => OnClose.InvokeAsync();
+}

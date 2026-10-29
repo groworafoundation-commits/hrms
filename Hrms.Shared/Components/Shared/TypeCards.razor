@@ -1,0 +1,18 @@
+<div class="typecards">
+    @foreach (var s in Items)
+    {
+        <button type="button" class="typecard @(Selected == s.Type ? "on" : "")" @onclick="() => Pick(s.Type)">
+            <small>@(string.IsNullOrEmpty(s.TypeName) ? "Other" : s.TypeName)</small>
+            <strong>@Fmt.Money(s.Total)</strong>
+            <span>@s.Count entries</span>
+        </button>
+    }
+</div>
+
+@code {
+    [Parameter] public List<TypeTotal> Items { get; set; } = [];
+    [Parameter] public string? Selected { get; set; }
+    [Parameter] public EventCallback<string?> OnSelect { get; set; }
+
+    Task Pick(string type) => OnSelect.InvokeAsync(Selected == type ? null : type);
+}

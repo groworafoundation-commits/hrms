@@ -1,0 +1,72 @@
+@implements IDisposable
+@inject PortalClient Portal
+@inject AuthState Auth
+@inject NavigationManager Nav
+
+<div class="notif-wrap">
+    <button class="icon-btn" type="button" aria-label="Notifications" @onclick="Toggle">
+        <Icon Name="bell" />@if (unread > 0) { <span class="dot">@(unread > 9 ? "9+" : unread.ToString())</span> }
+    </button>
+    @if (open)
+    {
+        <div class="notif-panel">
+            <div class="notif-head"><strong>Notifications</strong>@if (unread > 0) { <button type="button" class="link plain" @onclick="ReadAll">Mark all read</button> }</div>
+            <ul>
+                @foreach (var n in items)
+                {
+                    <li class="@(n.ReadAt is null ? "unread" : "")" @onclick="() => Open(n)">
+                        <b>@n.Title</b>
+                        @if (!string.IsNullOrEmpty(n.Body)) { <span>@n.Body</span> }
+                        <small>@Ago(n.CreatedAt)</small>
+                    </li>
+                }
+                @if (items.Count == 0) { <li class="none">Nothing yet. Approvals and updates will show here.</li> }
+            </ul>
+        </div>
+    }
+</div>
+
+@code {
+    List<NotificationItem> items = [];
+    int unread;
+    bool open;
+    PeriodicTimer? timer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Refresh();
+        _ = Poll();
+    }
+
+    async Task Poll()
+    {
+        timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+        try { while (await timer.WaitForNextTickAsync()) { await Refresh(); await InvokeAsync(StateHasChanged); } }
+        catch (ObjectDisposedException) { }
+    }
+
+    async Task Refresh()
+    {
+        if (!Auth.IsSignedIn || Auth.User!.MustChange) return;
+        try { var r = await Portal.Notifications(); if (r is not null) { items = r.Items; unread = r.Unread; } } catch { }
+    }
+
+    async Task Toggle() { open = !open; if (open) await Refresh(); }
+
+    async Task Open(NotificationItem n)
+    {
+        if (n.ReadAt is null) { await Portal.MarkRead(n.Id); n.ReadAt = DateTime.Now; unread = Math.Max(0, unread - 1); }
+        open = false;
+        if (!string.IsNullOrEmpty(n.Link)) Nav.NavigateTo(n.Link);
+    }
+
+    async Task ReadAll() { await Portal.ReadAllNotifications(); await Refresh(); }
+
+    static string Ago(DateTime t)
+    {
+        var m = (int)(DateTime.Now - t).TotalMinutes;
+        return m < 1 ? "just now" : m < 60 ? m + " min ago" : m < 1440 ? m / 60 + " h ago" : t.ToString("d MMM HH:mm");
+    }
+
+    public void Dispose() => timer?.Dispose();
+}

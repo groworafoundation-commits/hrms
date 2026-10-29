@@ -1,0 +1,26 @@
+@inject AuthState Auth
+<nav class="subnav" aria-label="Payroll sections">
+    @foreach (var t in Tabs.Where(t => Auth.CanAny(t.Options)))
+    {
+        <NavLink class="subnav-item" href="@t.Href" Match="@(t.Href is "payroll" or "payroll/leave" ? NavLinkMatch.All : NavLinkMatch.Prefix)">@t.Label</NavLink>
+    }
+</nav>
+
+@code {
+    record Tab(string Label, string Href, params string[] Options);
+
+    static readonly Tab[] Tabs =
+    [
+        new("Payslips", "payroll", "164", "162"),
+        new("Employee master", "payroll/employees", AuthState.EmployeeMaster),
+        new("Salary structure", "payroll/structure", AuthState.Grade),
+        new("Employee leave", "payroll/leave", AuthState.Leave),
+        new("Leave calendar", "payroll/leave/calendar", AuthState.Leave),
+        new("Loans and advances", "payroll/loans", AuthState.Loans),
+        new("Variable salary", "payroll/variable", AuthState.Variable),
+        new("Accruals", "payroll/accruals", AuthState.Loans),
+        new("Transfers", "payroll/transfers", AuthState.Transfer),
+        new("Salary heads", "payroll/heads", AuthState.Grade),
+        new("Reports", "payroll/reports", AuthState.Reports, "164"),
+    ];
+}

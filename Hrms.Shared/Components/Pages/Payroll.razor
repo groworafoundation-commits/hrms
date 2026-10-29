@@ -1,0 +1,92 @@
+@page "/payroll"
+@inject HrmsClient Api
+
+<PageTitle>Payroll</PageTitle>
+
+<section class="greeting">
+    <div><h1>Payroll</h1><p>Processed salaries from the ERP, amounts in AED.</p></div>
+    <select class="sel" @bind="month" @bind:after="Load">
+        @foreach (var m in months)
+        {
+            <option value="@m.Month">@Fmt.MonthLabel(m.Month)</option>
+        }
+    </select>
+</section>
+<PayrollNav />
+
+<State Loading="@loading" Error="@error" OnRetry="Init">
+    @if (run is not null)
+    {
+        <section class="kpis">
+            <article class="card kpi"><span class="kpi-icon tone-blue"><Icon Name="users" Size="26" /></span><div class="kpi-body"><small>Employees paid</small><strong>@run.Rows.Count</strong></div></article>
+            <article class="card kpi"><span class="kpi-icon tone-violet"><Icon Name="wallet" Size="26" /></span><div class="kpi-body"><small>Basic salary</small><strong>@Fmt.Money(run.Basic)</strong></div></article>
+            <article class="card kpi"><span class="kpi-icon tone-orange"><Icon Name="trend-up" Size="26" /></span><div class="kpi-body"><small>Additions / deductions</small><strong>@Fmt.Money(run.Addition)</strong><span class="kpi-note down">- @Fmt.Money(run.Deduction)</span></div></article>
+            <article class="card kpi"><span class="kpi-icon tone-green"><Icon Name="check" Size="26" /></span><div class="kpi-body"><small>Net payable</small><strong>@Fmt.Money(run.Net)</strong></div></article>
+        </section>
+
+        <section class="card toolbar">
+            <label class="search flat">
+                <Icon Name="search" Size="18" />
+                <input type="text" placeholder="Filter by employee" @bind="filter" @bind:event="oninput" />
+            </label>
+        </section>
+
+        <section class="card">
+            <table class="tbl rows">
+                <thead><tr><th>Employee</th><th class="r hide-sm">Worked days</th><th class="r hide-sm">Leave days</th><th class="r">Basic</th><th class="r hide-sm">Additions</th><th class="r hide-sm">Deductions</th><th class="r">Net</th></tr></thead>
+                <tbody>
+                    @foreach (var r in Visible)
+                    {
+                        <tr @onclick="() => Open(r.EmpCode)">
+                            <td><div class="who"><Avatar Name="@r.Name" Size="34" /><div><strong>@Fmt.Title(r.Name)</strong><small>@r.EmpCode</small></div></div></td>
+                            <td class="r hide-sm">@r.WorkedDays.ToString("0.#")</td>
+                            <td class="r hide-sm">@r.LeaveDays.ToString("0.#")</td>
+                            <td class="r">@Fmt.Money2(r.Basic)</td>
+                            <td class="r hide-sm">@Fmt.Money2(r.Addition)</td>
+                            <td class="r hide-sm">@Fmt.Money2(r.Deduction)</td>
+                            <td class="r"><b>@Fmt.Money2(r.Net)</b></td>
+                        </tr>
+                    }
+                </tbody>
+                <tfoot><tr><td>Total</td><td class="hide-sm"></td><td class="hide-sm"></td><td class="r">@Fmt.Money2(run.Basic)</td><td class="r hide-sm">@Fmt.Money2(run.Addition)</td><td class="r hide-sm">@Fmt.Money2(run.Deduction)</td><td class="r">@Fmt.Money2(run.Net)</td></tr></tfoot>
+            </table>
+        </section>
+    }
+</State>
+
+@code {
+    [Inject] NavigationManager Nav { get; set; } = default!;
+
+    List<PayrollMonth> months = [];
+    PayrollRun? run;
+    string? month, filter, error;
+    bool loading = true;
+
+    IEnumerable<PayslipRow> Visible => run is null ? [] :
+        string.IsNullOrWhiteSpace(filter) ? run.Rows : run.Rows.Where(r => r.Name.Contains(filter, StringComparison.OrdinalIgnoreCase) || r.EmpCode.Contains(filter, StringComparison.OrdinalIgnoreCase));
+
+    protected override Task OnInitializedAsync() => Init();
+
+    async Task Init()
+    {
+        loading = true; error = null;
+        try
+        {
+            months = await Api.PayrollMonths() ?? [];
+            month ??= months.FirstOrDefault()?.Month;
+            run = await Api.Payroll(month);
+        }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try { run = await Api.Payroll(month); }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+
+    void Open(string code) => Nav.NavigateTo($"employees/{Uri.EscapeDataString(code)}");
+}

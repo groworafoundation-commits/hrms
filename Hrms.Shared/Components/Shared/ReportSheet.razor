@@ -1,0 +1,168 @@
+@using System.Text.Json
+
+@if (Result is not null)
+{
+    if (Layout.Kind == "payslip")
+    {
+        var people = Result.Extra.Count > 0
+            ? Result.Extra
+            : Result.Rows.GroupBy(r => Text(r, "code")).Select(g => new Dictionary<string, JsonElement> { ["code"] = g.First()["code"], ["name"] = g.First()["name"] }).ToList();
+        var period = (Result.Subtitle ?? "").Split('|')[0].Trim();
+        foreach (var emp in people)
+        {
+            var empCode = Text(emp, "code");
+            var lines = Result.Rows.Where(r => Text(r, "code") == empCode).ToList();
+            var earn = lines.Where(l => Text(l, "section") == "Earnings").ToList();
+            var ded = lines.Where(l => Text(l, "section") == "Deductions").ToList();
+            var net = Dec(lines.FirstOrDefault(l => Text(l, "section") == "Net pay"), "amount");
+            var rows = Math.Max(earn.Count, ded.Count);
+            <div class="sheet portrait slip">
+                <ReportHeader Company="Company" Title="PAY SLIP" Subtitle="@period" />
+                <table class="info">
+                    <tr><td>Employee code</td><td><b>@empCode</b></td><td>Days worked</td><td><b>@Num(emp, "workeddays")</b></td></tr>
+                    <tr><td>Employee name</td><td><b>@Fmt.Title(Text(emp, "name"))</b></td><td>Leave days</td><td><b>@Num(emp, "leavedays")</b></td></tr>
+                    <tr><td>Designation</td><td><b>@Text(emp, "designation")</b></td><td>Date of joining</td><td><b>@Fmt.Cell(Get(emp, "doj"), "date")</b></td></tr>
+                    <tr><td>Bank</td><td><b>@Text(emp, "bank")</b></td><td>Account / payment mode</td><td><b>@Text(emp, "account") @Text(emp, "mop")</b></td></tr>
+                </table>
+                <table class="crt slip-table">
+                    <thead><tr><th>Earnings</th><th class="r">Amount</th><th class="gap"></th><th>Deductions</th><th class="r">Amount</th></tr></thead>
+                    <tbody>
+                        @for (var i = 0; i < rows; i++)
+                        {
+                            <tr>
+                                <td>@(i < earn.Count ? Text(earn[i], "item") : "")</td><td class="r">@(i < earn.Count ? Money(earn[i], "amount") : "")</td>
+                                <td class="gap"></td>
+                                <td>@(i < ded.Count ? Text(ded[i], "item") : "")</td><td class="r">@(i < ded.Count ? Money(ded[i], "amount") : "")</td>
+                            </tr>
+                        }
+                        <tr class="grand">
+                            <td>Total earnings</td><td class="r">@earn.Sum(l => Dec(l, "amount")).ToString("N2", Inv)</td><td class="gap"></td>
+                            <td>Total deductions</td><td class="r">@ded.Sum(l => Dec(l, "amount")).ToString("N2", Inv)</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div class="net-band"><span>NET PAY</span><b>@(Company?.Currency ?? "AED") @net.ToString("N2", Inv)</b></div>
+                <p class="words">@AmountInWords.ToWords(net, Company?.Currency ?? "AED")</p>
+                <div class="sign-row">
+                    @foreach (var s in new[] { "Employee signature", "Accounts", "HR manager" }) { <div class="sign"><span>@s</span></div> }
+                </div>
+                <p class="foot-note">This is a computer generated pay slip.</p>
+            </div>
+        }
+        if (people.Count == 0) { <div class="sheet portrait"><ReportHeader Company="Company" Title="PAY SLIP" Subtitle="@period" /><p class="empty-sheet">No pay slips for these filters.</p></div> }
+    }
+    else if (Layout.Kind == "statement")
+    {
+        foreach (var row in Result.Rows)
+        {
+            var payable = Dec(row, "payable");
+            <div class="sheet portrait slip">
+                <ReportHeader Company="Company" Title="FINAL SETTLEMENT STATEMENT" Subtitle="@Fmt.Title(Text(row, "name"))" />
+                <table class="info">
+                    <tr><td>Employee code</td><td><b>@Text(row, "code")</b></td><td>Date of joining</td><td><b>@Fmt.Cell(Get(row, "joined"), "date")</b></td></tr>
+                    <tr><td>Employee name</td><td><b>@Fmt.Title(Text(row, "name"))</b></td><td>Last working date</td><td><b>@Fmt.Cell(Get(row, "left"), "date")</b></td></tr>
+                </table>
+                <table class="crt slip-table">
+                    <thead><tr><th>Description</th><th class="r">Amount</th></tr></thead>
+                    <tbody>
+                        <tr><td>End of service</td><td class="r">@Money(row, "eos")</td></tr>
+                        <tr><td>Pending leave salary</td><td class="r">@Money(row, "leavesalary")</td></tr>
+                        <tr><td>Last month net salary</td><td class="r">@Money(row, "net")</td></tr>
+                        <tr><td>Less: pending loans and advances</td><td class="r">(@Money(row, "pending"))</td></tr>
+                        <tr class="grand"><td>Total payable</td><td class="r">@payable.ToString("N2", Inv)</td></tr>
+                    </tbody>
+                </table>
+                <p class="words">@AmountInWords.ToWords(payable, Company?.Currency ?? "AED")</p>
+                <div class="sign-row">
+                    @foreach (var s in new[] { "Employee signature", "HR manager", "Finance manager" }) { <div class="sign"><span>@s</span></div> }
+                </div>
+                <p class="foot-note">@Result.Note</p>
+            </div>
+        }
+        if (Result.Rows.Count == 0) { <div class="sheet portrait"><ReportHeader Company="Company" Title="FINAL SETTLEMENT STATEMENT" /><p class="empty-sheet">No employees have left.</p></div> }
+    }
+    else
+    {
+        var groups = new List<KeyValuePair<string, List<Dictionary<string, JsonElement>>>>();
+        if (Layout.GroupBy is null) groups.Add(new("", Result.Rows));
+        else
+            groups = Result.Rows.GroupBy(r => { var t = Text(r, Layout.GroupBy); return string.IsNullOrWhiteSpace(t) ? "Unassigned" : t; })
+                .Select(g => new KeyValuePair<string, List<Dictionary<string, JsonElement>>>(g.Key, g.ToList())).ToList();
+        var subKeys = Layout.SubtotalKeys ?? Result.Columns.Where(c => c.Total).Select(c => c.Key).ToArray();
+        <div class="sheet @(Layout.Landscape ? "landscape" : "portrait")">
+            <ReportHeader Company="Company" Title="@Result.Title.ToUpperInvariant()" Subtitle="@Result.Subtitle" />
+            <table class="crt @(Result.Columns.Count > 12 ? "dense" : Result.Columns.Count > 9 ? "mid" : "")">
+                <thead><tr>@foreach (var col in Result.Columns) { <th class="@Cls(col)">@col.Label</th> }</tr></thead>
+                <tbody>
+                    @foreach (var g in groups)
+                    {
+                        @if (Layout.GroupBy is not null)
+                        {
+                            <tr class="grp"><td colspan="@Result.Columns.Count">@(string.IsNullOrEmpty(Layout.GroupLabel) ? "" : Layout.GroupLabel + ": ")<b>@GroupName(g.Key)</b> <span>(@g.Value.Count)</span></td></tr>
+                        }
+                        @foreach (var row in g.Value)
+                        {
+                            <tr>@foreach (var col in Result.Columns) { <td class="@Cls(col)">@Cell(row, col)</td> }</tr>
+                        }
+                        @if (Layout.GroupBy is not null && subKeys.Length > 0)
+                        {
+                            <tr class="sub">
+                                @foreach (var (col, i) in Result.Columns.Select((c, i) => (c, i)))
+                                {
+                                    <td class="@Cls(col)">@(i == 0 ? "Sub total" : subKeys.Contains(col.Key) ? Sum(g.Value, col) : "")</td>
+                                }
+                            </tr>
+                        }
+                    }
+                    @if (Result.Rows.Count == 0)
+                    {
+                        <tr><td colspan="@Result.Columns.Count" class="empty-row">@(Result.Note ?? "No rows for these filters.")</td></tr>
+                    }
+                    else if (Layout.GrandTotal && Result.Totals.Count > 0)
+                    {
+                        <tr class="grand">
+                            @foreach (var (col, i) in Result.Columns.Select((c, i) => (c, i)))
+                            {
+                                <td class="@Cls(col)">@(i == 0 ? "Grand total" : col.Total ? Sum(Result.Rows, col) : "")</td>
+                            }
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            @if (Result.Rows.Count > 0)
+            {
+                <p class="foot-note">@Result.Rows.Count @(Result.Rows.Count == 1 ? "record" : "records")@(string.IsNullOrEmpty(Result.Note) ? "" : " | " + Result.Note)</p>
+                @if (Layout.Signatures is { Length: > 0 })
+                {
+                    <div class="sign-row">@foreach (var s in Layout.Signatures) { <div class="sign"><span>@s</span></div> }</div>
+                }
+            }
+        </div>
+    }
+}
+
+@code {
+    static readonly System.Globalization.CultureInfo Inv = System.Globalization.CultureInfo.InvariantCulture;
+
+    [Parameter] public ReportResult? Result { get; set; }
+    [Parameter] public CompanyInfo? Company { get; set; }
+    [Parameter] public ReportLayout Layout { get; set; } = new("table", true);
+
+    static JsonElement Get(Dictionary<string, JsonElement> row, string key) => row.TryGetValue(key, out var e) ? e : default;
+    static string Text(Dictionary<string, JsonElement> row, string key) => row.TryGetValue(key, out var e) ? Fmt.Cell(e, "text") : "";
+    static string Num(Dictionary<string, JsonElement> row, string key) => row.TryGetValue(key, out var e) ? Fmt.Cell(e, "number") : "";
+    static string Money(Dictionary<string, JsonElement> row, string key) => row.TryGetValue(key, out var e) ? Fmt.Cell(e, "money") : "";
+    static decimal Dec(Dictionary<string, JsonElement>? row, string key) =>
+        row is not null && row.TryGetValue(key, out var e) && e.ValueKind == JsonValueKind.Number ? e.GetDecimal() : 0m;
+
+    static string Cls(ReportColumn c) => c.Type is "money" or "number" ? "r" : "";
+    static string GroupName(string k) => k;
+
+    static string Cell(Dictionary<string, JsonElement> row, ReportColumn col) => row.TryGetValue(col.Key.ToLowerInvariant(), out var e) ? Fmt.Cell(e, col.Type) : "";
+
+    static string Sum(List<Dictionary<string, JsonElement>> rows, ReportColumn col)
+    {
+        var total = rows.Sum(r => Dec(r, col.Key.ToLowerInvariant()));
+        return col.Type == "money" ? total.ToString("N2", Inv) : total.ToString("0.##", Inv);
+    }
+}

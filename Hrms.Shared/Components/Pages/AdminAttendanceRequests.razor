@@ -1,0 +1,94 @@
+@page "/admin/attendance/requests"
+@inject AttendanceClient Api
+@inject AuthState Auth
+
+<PageTitle>Attendance requests</PageTitle>
+
+<section class="greeting"><div><h1>Attendance requests</h1><p>Correction requests from employees who missed a punch.</p></div></section>
+
+<nav class="subnav">
+    @foreach (var s in new[] { "Pending", "Approved", "Rejected", "All" })
+    {
+        <button type="button" class="subnav-item @(status == s ? "active" : "")" @onclick="() => SetStatus(s)">@s</button>
+    }
+</nav>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    <section class="card">
+        <table class="tbl rows">
+            <thead><tr><th>Employee</th><th>Day</th><th>In</th><th>Out</th><th>Reason</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var r in rows)
+                {
+                    <tr>
+                        <td><div class="who"><Avatar Name="@(r.Name ?? r.EmpCode)" Size="34" /><div><strong>@Fmt.Title(r.Name ?? r.EmpCode)</strong><small>@r.EmpCode | asked @Fmt.Date(r.RequestedAt)</small></div></div></td>
+                        <td>@Fmt.Date(r.WorkDate)</td><td>@Att.Time(r.InTime)</td><td>@Att.Time(r.OutTime)</td>
+                        <td>@r.Reason@if (!string.IsNullOrEmpty(r.DecisionNote)) { <small class="muted"> | @r.DecidedBy: @r.DecisionNote</small> }</td>
+                        <td><StatusBadge Status="@r.Status" /></td>
+                        <td class="r">@if (r.Status == "Pending" && Auth.CanEdit("H206")) { <button type="button" class="btn primary sm" @onclick="() => Open(r)">Review</button> }</td>
+                    </tr>
+                }
+                @if (rows.Count == 0) { <tr><td colspan="7" class="empty-row">Nothing here.</td></tr> }
+            </tbody>
+        </table>
+    </section>
+</State>
+
+@if (current is not null)
+{
+    <Modal Title="@($"Correction - {Fmt.Title(current.Name ?? current.EmpCode)}")" OnClose="() => current = null">
+        <div class="form">
+            <dl class="facts2">
+                <div><dt>Day</dt><dd>@current.WorkDate.ToString("dddd, d MMMM yyyy")</dd></div>
+                <div><dt>Wants in</dt><dd>@Att.Time(current.InTime)</dd></div>
+                <div><dt>Wants out</dt><dd>@Att.Time(current.OutTime)</dd></div>
+                <div><dt>Reason</dt><dd>@current.Reason</dd></div>
+            </dl>
+            <p class="muted note">Approving with both times replaces that day's punches. With one time, it fills in the missing punch.</p>
+            <label class="field full"><span>Note (required to reject)</span><input type="text" maxlength="300" @bind="note" /></label>
+            @if (actionError is not null) { <div class="form-error">@actionError</div> }
+            <div class="form-actions">
+                <button type="button" class="btn ghost" @onclick="() => current = null" disabled="@busy">Close</button>
+                @if (Auth.CanDelete("H206")) { <button type="button" class="btn danger" @onclick="() => Decide(false)" disabled="@busy">Reject</button> }
+                <button type="button" class="btn primary" @onclick="() => Decide(true)" disabled="@busy">Approve</button>
+            </div>
+        </div>
+    </Modal>
+}
+@if (toast is not null) { <div class="toast">@toast</div> }
+
+@code {
+    List<FixRequest> rows = [];
+    FixRequest? current;
+    string status = "Pending", note = "";
+    bool loading = true, busy;
+    string? error, actionError, toast;
+
+    protected override Task OnInitializedAsync() => Load();
+
+    async Task SetStatus(string s) { status = s; await Load(); }
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try { rows = await Api.Requests(status) ?? []; }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+
+    void Open(FixRequest r) { current = r; note = ""; actionError = null; }
+
+    async Task Decide(bool approve)
+    {
+        busy = true; actionError = null;
+        var r = approve ? await Api.Approve(current!.Id, note) : await Api.Reject(current!.Id, note);
+        busy = false;
+        if (!r.Ok) { actionError = r.Error; return; }
+        var who = Fmt.Title(current.Name ?? current.EmpCode);
+        current = null;
+        await Load();
+        toast = (approve ? "Approved: " : "Rejected: ") + who;
+        StateHasChanged();
+        await Task.Delay(3500); toast = null; StateHasChanged();
+    }
+}

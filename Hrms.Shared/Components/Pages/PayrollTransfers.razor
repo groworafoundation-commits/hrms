@@ -1,0 +1,99 @@
+@page "/payroll/transfers"
+@inject AuthState Auth
+@inject HrmsClient Api
+
+<PageTitle>Transfers</PageTitle>
+
+<section class="greeting"><div><h1>Payroll</h1><p>Employee transfers between locations and divisions.</p></div>
+    <div class="page-actions">@if (Auth.CanAdd(AuthState.Transfer)) { <button type="button" class="btn primary" @onclick="() => showForm = true"><Icon Name="plus" Size="16" /> Add transfer</button> }</div></section>
+<PayrollNav />
+
+<section class="card toolbar">
+    <label class="search flat"><Icon Name="search" Size="18" /><input type="text" placeholder="Search employee" @bind="query" @bind:event="oninput" @bind:after="Debounced" /></label>
+</section>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    @if (rows is not null)
+    {
+        <section class="card">
+            <table class="tbl">
+                <thead><tr><th>Employee</th><th>Date</th><th>From</th><th>To</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var t in rows)
+                    {
+                        <tr>
+                            <td><strong>@Fmt.Title(t.Name ?? t.EmpCode)</strong><small>@t.EmpCode</small></td>
+                            <td>@Fmt.Date(t.Date)</td>
+                            <td>@t.FromLocation</td>
+                            <td>@t.ToLocation</td>
+                            <td class="r">@if (Auth.CanDelete(AuthState.Transfer)) { <button type="button" class="btn ghost sm" @onclick="() => { deleting = t; deleteError = null; }">Delete</button> }</td>
+                        </tr>
+                    }
+                    @if (rows.Count == 0) { <tr><td colspan="5" class="empty-row">No transfers found.</td></tr> }
+                </tbody>
+            </table>
+        </section>
+    }
+</State>
+
+@if (showForm)
+{
+    <Modal Title="Add transfer" Size="sm" OnClose="() => showForm = false">
+        <TransferForm OnSaved="Saved" OnCancel="() => showForm = false" />
+    </Modal>
+}
+@if (deleting is not null)
+{
+    <ConfirmModal Title="Delete transfer" Message="@($"Delete the transfer of {Fmt.Title(deleting.Name ?? deleting.EmpCode)} to {deleting.ToLocation} on {Fmt.Date(deleting.Date)}?")" Busy="deleteBusy" Error="deleteError" OnConfirm="ConfirmDelete" OnCancel="() => deleting = null" />
+}
+@if (toast is not null) { <div class="toast">@toast</div> }
+
+@code {
+    [Inject] NavigationManager Nav { get; set; } = default!;
+    List<TransferRow>? rows;
+    bool showForm, deleteBusy;
+    TransferRow? deleting;
+    string? deleteError;
+
+    string? toast;
+    async Task Toast(string message) { toast = message; StateHasChanged(); await Task.Delay(3500); toast = null; StateHasChanged(); }
+
+    async Task Saved() { showForm = false; await Load(); _ = Toast("Transfer saved"); }
+
+    async Task ConfirmDelete()
+    {
+        deleteBusy = true; deleteError = null;
+        var r = await Api.DeleteTransfer(deleting!.Id);
+        deleteBusy = false;
+        if (!r.Ok) { deleteError = r.Error; return; }
+        deleting = null;
+        await Load();
+        _ = Toast("Transfer deleted");
+    }
+
+    string query = "";
+    bool loading = true;
+    string? error;
+    CancellationTokenSource? debounce;
+
+    protected override Task OnInitializedAsync()
+    {
+        if (Nav.Uri.Contains("add=1", StringComparison.OrdinalIgnoreCase)) showForm = true;
+        return Load();
+    }
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try { rows = await Api.Transfers(query); }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+
+    async Task Debounced()
+    {
+        debounce?.Cancel(); debounce = new CancellationTokenSource();
+        try { await Task.Delay(300, debounce.Token); } catch (TaskCanceledException) { return; }
+        await Load();
+    }
+}

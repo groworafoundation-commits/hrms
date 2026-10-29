@@ -1,0 +1,115 @@
+@page "/login"
+@layout EmptyLayout
+@inject HrmsClient Api
+@inject AuthState Auth
+@inject NavigationManager Nav
+@inject IHostServices Host
+
+<PageTitle>Sign in</PageTitle>
+
+<div class="login @(dark ? "dark" : "")">
+    <section class="login-hero">
+        <div class="login-brand">
+            <span class="brand-mark"><Icon Name="users" Size="24" /></span>
+            <div><strong>HRMS</strong><small>People | Process | Growth</small></div>
+        </div>
+
+        <div class="login-copy">
+            <span class="login-kicker"><Icon Name="sparkles" Size="14" /> Connected to your ERP</span>
+            <h1>Everything people.<br />One place.</h1>
+            <p>Employees, leave, payroll and reports, with the same users and access rights you already manage in the ERP.</p>
+        </div>
+
+        <ul class="login-tiles">
+            <li><span class="tone-blue"><Icon Name="users" Size="22" /></span><div><strong>Employee masters</strong><small>Profiles, extra details, grades</small></div></li>
+            <li><span class="tone-violet"><Icon Name="calendar" Size="22" /></span><div><strong>Leave calendar</strong><small>Plan, approve and track</small></div></li>
+            <li><span class="tone-green"><Icon Name="wallet" Size="22" /></span><div><strong>Payroll and loans</strong><small>Salary, advances, accruals</small></div></li>
+            <li><span class="tone-orange"><Icon Name="chart" Size="22" /></span><div><strong>16 payroll reports</strong><small>Print or export to PDF</small></div></li>
+        </ul>
+
+        <div class="login-foot"><Icon Name="shield" Size="16" /> Access follows your ERP role. You only see the employees assigned to you.</div>
+    </section>
+
+    <section class="login-side">
+        <div class="login-tools">
+            <button type="button" class="icon-btn bordered" title="@(dark ? "Light mode" : "Dark mode")" @onclick="() => dark = !dark"><Icon Name="@(dark ? "sun" : "moon")" Size="18" /></button>
+            <select class="sel" aria-label="Language"><option>English</option></select>
+        </div>
+
+        <form class="login-card" @onsubmit="Submit" @onsubmit:preventDefault="true">
+            <span class="login-logo"><Icon Name="lock" Size="26" /></span>
+            <h2>Welcome Back!</h2>
+            <p class="login-sub">Sign in to continue to your HRMS workspace.</p>
+
+            @if (error is not null) { <div class="login-error" role="alert">@error</div> }
+
+            <label class="field">
+                <span>User name or ID</span>
+                <div class="input-ic"><Icon Name="user" Size="18" /><input type="text" @bind="user" @bind:event="oninput" placeholder="Enter your user name" autocomplete="username" autofocus /></div>
+            </label>
+
+            <label class="field">
+                <span>Password</span>
+                <div class="input-ic">
+                    <Icon Name="key" Size="18" />
+                    <input type="@(show ? "text" : "password")" @bind="password" @bind:event="oninput" placeholder="Enter your password" autocomplete="current-password" />
+                    <button type="button" class="eye" aria-label="@(show ? "Hide password" : "Show password")" @onclick="() => show = !show"><Icon Name="@(show ? "eye-off" : "eye")" Size="18" /></button>
+                </div>
+            </label>
+
+            <div class="login-row">
+                <label class="check-inline"><input type="checkbox" @bind="remember" /> Remember me</label>
+                <button type="button" class="link plain" @onclick="() => hint = !hint">Forgot Password?</button>
+            </div>
+            @if (hint) { <p class="login-hint">Passwords are managed in the ERP. Ask your administrator to reset yours.</p> }
+
+            <button type="submit" class="btn primary login-go" disabled="@busy">
+                @if (busy) { <span class="spinner sm"></span> <span>Signing in...</span> } else { <span>Sign In</span> <Icon Name="arrow-right" Size="18" /> }
+            </button>
+
+            <div class="login-or"><span>or continue with</span></div>
+            <div class="login-sso">
+                <button type="button" class="btn ghost" disabled title="Not enabled for this workspace"><i class="ms"></i> Microsoft</button>
+                <button type="button" class="btn ghost" disabled title="Not enabled for this workspace"><i class="gg"></i> Google</button>
+                <button type="button" class="btn ghost" disabled title="Not enabled for this workspace"><Icon Name="key" Size="16" /> SSO</button>
+            </div>
+        </form>
+
+        <p class="login-legal">&copy; @DateTime.Today.Year Launch Tech. All rights reserved.</p>
+    </section>
+</div>
+
+@code {
+    string user = "", password = "";
+    bool remember = true, show, busy, dark, hint;
+    string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Auth.IsSignedIn) { Nav.NavigateTo("", replace: true); return; }
+        try { user = await Host.GetPreference("login.user") ?? ""; } catch { }
+        try { dark = await Host.GetPreference("login.dark") == "1"; } catch { }
+    }
+
+    async Task Submit()
+    {
+        if (busy) return;
+        error = null;
+        if (string.IsNullOrWhiteSpace(user) || string.IsNullOrEmpty(password)) { error = "Enter your user name and password."; return; }
+
+        busy = true;
+        var (result, err) = await Api.Login(user.Trim(), password);
+        busy = false;
+        if (result is null) { error = err; password = ""; return; }
+
+        try
+        {
+            await Host.SetPreference("login.user", remember ? user.Trim() : null);
+            await Host.SetPreference("login.dark", dark ? "1" : "0");
+        }
+        catch { }
+        password = "";
+        Auth.SignIn(result);
+        Nav.NavigateTo(Auth.Landing, replace: true);
+    }
+}

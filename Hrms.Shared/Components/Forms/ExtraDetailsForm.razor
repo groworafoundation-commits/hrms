@@ -1,0 +1,69 @@
+@inject HrmsClient Api
+
+<form class="form" @onsubmit="Save">
+    <p class="form-note">Extra details are saved as a new version from the effective date. Earlier versions stay in the history.</p>
+    <div class="form-grid">
+        <label class="field"><span>Effective date</span><input type="date" @bind="m.EffectiveDate" /></label>
+        <label class="field"><span>Date of joining</span><input type="date" @bind="m.Doj" /></label>
+        <label class="field"><span>Termination date</span><input type="date" @bind="m.TermDate" /></label>
+        <label class="field"><span>Confirmation date</span><input type="date" @bind="m.ConfirmDate" /></label>
+        <label class="field"><span>Contract date</span><input type="date" @bind="m.ContractDate" /></label>
+        <label class="field"><span>Designation</span><input type="text" list="dl-desig" @bind="m.Designation" maxlength="20" /></label>
+        <label class="field"><span>Nationality</span><input type="text" list="dl-country" @bind="m.Country" maxlength="50" /></label>
+        <label class="field"><span>Birthplace</span><input type="text" @bind="m.Birthplace" maxlength="50" /></label>
+        <label class="field"><span>Marital status</span><input type="text" list="dl-mstatus" @bind="m.MaritalStatus" maxlength="20" /></label>
+        <label class="field"><span>Blood group</span><input type="text" list="dl-bgroup" @bind="m.BloodGroup" maxlength="20" /></label>
+        <label class="field"><span>Bank</span><input type="text" list="dl-bank" @bind="m.Bank" maxlength="20" /></label>
+        <label class="field"><span>Employee bank</span><input type="text" @bind="m.Ebank" maxlength="20" /></label>
+        <label class="field"><span>Account number</span><input type="text" @bind="m.BankAccount" /></label>
+        <label class="field"><span>Payment mode</span><input type="text" list="dl-mop" @bind="m.PaymentMode" maxlength="20" /></label>
+        <label class="field"><span>Document number</span><input type="text" @bind="m.DocNo" maxlength="20" /></label>
+        <label class="field"><span>Ticket period (years)</span><input type="number" step="0.5" @bind="m.TicketPeriod" /></label>
+        <label class="field"><span>Entitled leave days per year</span><input type="text" @bind="m.EntitledYear" maxlength="50" /></label>
+        <label class="field"><span>Route</span><input type="text" @bind="m.Route" maxlength="20" /></label>
+        <label class="field"><span>Company</span><input type="text" list="dl-company" @bind="m.Company" maxlength="100" /></label>
+        <label class="field check"><input type="checkbox" @bind="m.Discontinue" /><span>Discontinued</span></label>
+    </div>
+    <datalist id="dl-desig">@foreach (var x in lookups?.Designations ?? []) { <option value="@x" /> }</datalist>
+    <datalist id="dl-country">@foreach (var x in lookups?.Countries ?? []) { <option value="@x" /> }</datalist>
+    <datalist id="dl-mstatus">@foreach (var x in lookups?.MaritalStatuses ?? []) { <option value="@x" /> }</datalist>
+    <datalist id="dl-bgroup">@foreach (var x in lookups?.BloodGroups ?? []) { <option value="@x" /> }</datalist>
+    <datalist id="dl-bank">@foreach (var x in lookups?.Banks ?? []) { <option value="@x" /> }</datalist>
+    <datalist id="dl-mop">@foreach (var x in lookups?.PaymentModes ?? []) { <option value="@x" /> }</datalist>
+    <datalist id="dl-company">@foreach (var x in lookups?.Companies ?? []) { <option value="@x" /> }</datalist>
+    @if (error is not null) { <div class="form-error">@error</div> }
+    <div class="form-actions">
+        <button type="button" class="btn ghost" @onclick="OnCancel" disabled="@busy">Cancel</button>
+        <button type="submit" class="btn primary" disabled="@busy">@(busy ? "Saving..." : "Save extra details")</button>
+    </div>
+</form>
+
+@code {
+    [Parameter, EditorRequired] public string EmpCode { get; set; } = "";
+    [Parameter] public EventCallback OnSaved { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    ExtraVersion m = new() { EffectiveDate = DateTime.Today };
+    FormLookups? lookups;
+    bool busy;
+    string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { lookups = await Api.FormLookups(); } catch { }
+        try
+        {
+            var latest = (await Api.ExtraVersions(EmpCode))?.FirstOrDefault();
+            if (latest is not null) { latest.EffectiveDate = DateTime.Today; latest.Id = 0; m = latest; }
+        }
+        catch { }
+    }
+
+    async Task Save()
+    {
+        busy = true; error = null;
+        var r = await Api.SaveExtra(EmpCode, m);
+        busy = false;
+        if (r.Ok) await OnSaved.InvokeAsync(); else error = r.Error;
+    }
+}

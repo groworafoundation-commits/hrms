@@ -1,0 +1,24 @@
+@inject HrmsClient Api
+
+<select class="sel full" value="@Value" @onchange="Changed" disabled="@Disabled">
+    <option value="">Select an employee</option>
+    @foreach (var e in options)
+    {
+        <option value="@e.EmpCode">@e.EmpCode - @Fmt.Title(e.Name)</option>
+    }
+</select>
+
+@code {
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+
+    List<EmployeeRow> options = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { options = await Api.EmployeeOptions(); } catch { }
+    }
+
+    Task Changed(ChangeEventArgs e) => ValueChanged.InvokeAsync(e.Value?.ToString() ?? "");
+}

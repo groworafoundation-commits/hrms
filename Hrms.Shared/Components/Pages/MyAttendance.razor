@@ -1,0 +1,285 @@
+@page "/my/attendance"
+@implements IDisposable
+@inject AttendanceClient Api
+@inject AuthState Auth
+
+<PageTitle>My attendance</PageTitle>
+
+<section class="greeting">
+    <div><h1>My attendance</h1><p>Punch in and out, and follow your hours.</p></div>
+    <div class="date-chip desk-only">@Now.ToString("ddd, dd MMM yyyy") <Icon Name="calendar" Size="18" /></div>
+</section>
+
+<State Loading="@loading" Error="@error" OnRetry="LoadAll">
+    @if (today is not null)
+    {
+        var worked = WorkedSeconds;
+        var required = today.Shift.FullDayMinutes * 60;
+        var pct = required == 0 ? 0 : Math.Min(100, worked * 100 / required);
+        <section class="att-hero">
+            <div class="att-clock">
+                <small>@(today.Day.Status == "Working" ? "You are punched in" : today.Day.Status == "Present" ? "Day complete" : "Current time")</small>
+                <strong>@Now.ToString("hh:mm:ss")<em>@Now.ToString("tt")</em></strong>
+                <span>@Now.ToString("dddd, d MMMM yyyy")</span>
+                <div class="att-shift"><Icon Name="clock" Size="14" /> @today.Shift.Name | @Att.Hhmm(today.Shift.StartTime) - @Att.Hhmm(today.Shift.EndTime) | Off: @(string.IsNullOrEmpty(today.Shift.WeeklyOffs) ? "none" : today.Shift.WeeklyOffs)</div>
+            </div>
+
+            <div class="att-ring" style="--p:@pct%">
+                <div><strong>@Att.Clock(worked)</strong><small>worked today</small><span>@(today.RemainingMinutes > 0 ? Att.Hm(Math.Max(0, today.Shift.FullDayMinutes - worked / 60)) + " to go" : "Target reached")</span></div>
+            </div>
+
+            <div class="att-action">
+                <span class="att-status @Att.Css(today.Day.Status)">@(today.Day.Late && today.Day.Status != "Absent" ? "Late by " + Att.Short(today.Day.LateMinutes) : Att.Label(today.Day.Status))</span>
+                <div class="seg att-mode">
+                    @foreach (var m in new[] { "Office", "Remote", "Site" })
+                    {
+                        <button type="button" class="@(mode == m ? "on" : "")" @onclick="() => mode = m">@m</button>
+                    }
+                </div>
+                @if (Auth.CanAdd("H106"))
+                {
+                    <button type="button" class="att-btn @(today.IsIn ? "out" : "in")" disabled="@busy" @onclick="Punch">
+                        <Icon Name="@(today.IsIn ? "logout" : "clock")" Size="22" /> @(busy ? "Please wait..." : today.IsIn ? "Punch out" : today.Punches.Count == 0 ? "Punch in" : "Punch in again")
+                    </button>
+                }
+                <input class="att-note" type="text" maxlength="120" placeholder="Add a note (optional)" @bind="note" />
+                @if (today.IsIn && today.InSince is not null) { <small class="muted">In since @Att.Time(today.InSince)</small> }
+                @if (punchError is not null) { <div class="form-error">@punchError</div> }
+            </div>
+        </section>
+
+        <section class="grid g-two">
+            <article class="card">
+                <div class="card-head"><h3>Today's punches</h3><span class="muted">@today.Punches.Count record@(today.Punches.Count == 1 ? "" : "s")</span></div>
+                @if (today.Punches.Count == 0) { <p class="muted note">No punches yet today.</p> }
+                <ol class="att-timeline">
+                    @foreach (var p in today.Punches)
+                    {
+                        <li class="@(p.Direction == "IN" ? "in" : "out")">
+                            <b>@(p.Direction == "IN" ? "Punch in" : "Punch out")</b>
+                            <span>@Att.Time(p.PunchTime)</span>
+                            <small>@p.WorkMode @(p.Source != "App" ? "| " + p.Source : "") @(string.IsNullOrEmpty(p.Note) ? "" : "| " + p.Note)</small>
+                        </li>
+                    }
+                </ol>
+            </article>
+            <article class="card">
+                <div class="card-head"><h3>Today at a glance</h3></div>
+                <dl class="facts2">
+                    <div><dt>First in</dt><dd>@Att.Time(today.Day.FirstIn)</dd></div>
+                    <div><dt>Last out</dt><dd>@Att.Time(today.Day.LastOut)</dd></div>
+                    <div><dt>Hours worked</dt><dd>@Att.Hm(worked / 60)</dd></div>
+                    <div><dt>Full day needs</dt><dd>@Att.Hm(today.Shift.FullDayMinutes)</dd></div>
+                    <div><dt>Late after</dt><dd>@Att.Time(today.Shift.StartTime.Add(TimeSpan.FromMinutes(today.Shift.GraceMinutes)))</dd></div>
+                    <div><dt>Shift ends</dt><dd>@Att.Time(today.Shift.EndTime)</dd></div>
+                </dl>
+            </article>
+        </section>
+    }
+
+    @if (monthData is not null)
+    {
+        var s = monthData.Summary;
+        <section class="kpis">
+            <article class="card kpi"><span class="kpi-icon tone-green"><Icon Name="check" Size="26" /></span><div class="kpi-body"><small>Present days</small><strong>@s.PresentDays.ToString("0.#")</strong><span class="kpi-note up">of @s.WorkingDays working days</span></div></article>
+            <article class="card kpi"><span class="kpi-icon tone-orange"><Icon Name="clock" Size="26" /></span><div class="kpi-body"><small>Late arrivals</small><strong>@s.Late</strong><span class="kpi-note link">this month</span></div></article>
+            <article class="card kpi"><span class="kpi-icon tone-red"><Icon Name="x" Size="26" /></span><div class="kpi-body"><small>Absent</small><strong>@s.Absent</strong><span class="kpi-note down">@(s.Missing > 0 ? s.Missing + " missing punch-out" : "days")</span></div></article>
+            <article class="card kpi"><span class="kpi-icon tone-blue"><Icon Name="trend-up" Size="26" /></span><div class="kpi-body"><small>Hours worked</small><strong>@Att.Hm(s.WorkedMinutes)</strong><span class="kpi-note link">avg @Att.Hm(s.AvgMinutes) a day</span></div></article>
+        </section>
+
+        <section class="card toolbar cal-bar att-bar">
+            <div class="cal-nav">
+                <button type="button" class="icon-btn sm bordered" aria-label="Previous month" @onclick="() => Move(-1)"><Icon Name="chevron-right" Size="16" /></button>
+                <button type="button" class="icon-btn sm bordered next" aria-label="Next month" @onclick="() => Move(1)"><Icon Name="chevron-right" Size="16" /></button>
+                <h2>@month.ToString("MMMM yyyy")</h2>
+            </div>
+            <div class="att-legend">
+                @foreach (var k in new[] { "Present", "PresentLate", "HalfDay", "Absent", "Leave", "Holiday", "Off" }) { <span class="@Att.Css(k)">@Att.Label(k)</span> }
+            </div>
+        </section>
+
+        <div class="att-grid">
+            @foreach (var dow in new[] { "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" }) { <div class="att-dow">@dow</div> }
+            @for (var i = 0; i < Offset; i++) { <div class="att-cell blank"></div> }
+            @foreach (var d in monthData.Days)
+            {
+                var st = d.Late && d.Status == "Present" ? "PresentLate" : d.Status;
+                <button type="button" class="att-cell @Att.Css(st) @(d.Date == DateTime.Today ? "today" : "")" disabled="@(d.Date > DateTime.Today)" @onclick="() => OpenDay(d)">
+                    <b>@d.Date.Day</b>
+                    <span>@(d.Holiday ?? d.LeaveName ?? Att.Label(st))</span>
+                    @if (d.FirstIn is not null) { <small>@d.FirstIn.Value.ToString("HH:mm")@(d.LastOut is not null && !d.OpenIn ? " - " + d.LastOut.Value.ToString("HH:mm") : "")</small> }
+                </button>
+            }
+        </div>
+    }
+
+    <section class="card">
+        <div class="card-head"><h3>My correction requests</h3></div>
+        <table class="tbl rows">
+            <thead><tr><th>Day</th><th>In</th><th>Out</th><th>Reason</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var r in requests)
+                {
+                    <tr>
+                        <td>@Fmt.Date(r.WorkDate)</td><td>@Att.Time(r.InTime)</td><td>@Att.Time(r.OutTime)</td>
+                        <td>@r.Reason@if (!string.IsNullOrEmpty(r.DecisionNote)) { <small class="muted"> | @r.DecidedBy: @r.DecisionNote</small> }</td>
+                        <td><StatusBadge Status="@r.Status" /></td>
+                        <td class="r">@if (r.Status == "Pending" && Auth.CanDelete("H106")) { <button type="button" class="btn ghost sm" @onclick="() => CancelFix(r)">Cancel</button> }</td>
+                    </tr>
+                }
+                @if (requests.Count == 0) { <tr><td colspan="6" class="empty-row">No correction requests.</td></tr> }
+            </tbody>
+        </table>
+    </section>
+</State>
+
+@if (dayDetail is not null)
+{
+    <Modal Title="@dayDetail.Day.Date.ToString("dddd, d MMMM yyyy")" OnClose="() => dayDetail = null">
+        <div class="form">
+            <span class="att-status @Att.Css(dayDetail.Day.Late && dayDetail.Day.Status == "Present" ? "PresentLate" : dayDetail.Day.Status)">@Att.Label(dayDetail.Day.Status)@(dayDetail.Day.Late ? " | late " + Att.Short(dayDetail.Day.LateMinutes) : "")@(dayDetail.Day.EarlyOut ? " | left early" : "")</span>
+            @if (dayDetail.Day.Holiday is not null) { <p class="muted note">@dayDetail.Day.Holiday</p> }
+            @if (dayDetail.Day.LeaveName is not null) { <p class="muted note">@dayDetail.Day.LeaveName</p> }
+            <dl class="facts2">
+                <div><dt>First in</dt><dd>@Att.Time(dayDetail.Day.FirstIn)</dd></div>
+                <div><dt>Last out</dt><dd>@Att.Time(dayDetail.Day.LastOut)</dd></div>
+                <div><dt>Hours worked</dt><dd>@Att.Hm(dayDetail.Day.WorkedMinutes)</dd></div>
+            </dl>
+            <ol class="att-timeline">
+                @foreach (var p in dayDetail.Punches)
+                {
+                    <li class="@(p.Direction == "IN" ? "in" : "out")"><b>@(p.Direction == "IN" ? "Punch in" : "Punch out")</b><span>@Att.Time(p.PunchTime)</span><small>@p.Source @(string.IsNullOrEmpty(p.WorkMode) ? "" : "| " + p.WorkMode)</small></li>
+                }
+            </ol>
+            <div class="form-actions">
+                <button type="button" class="btn ghost" @onclick="() => dayDetail = null">Close</button>
+                @if (Auth.CanEdit("H106") && dayDetail.Day.Date >= DateTime.Today.AddDays(-31)) { <button type="button" class="btn primary" @onclick="StartFix">Request a correction</button> }
+            </div>
+        </div>
+    </Modal>
+}
+
+@if (fix is not null)
+{
+    <Modal Title="@("Correct " + fix.Date.ToString("d MMM yyyy"))" OnClose="() => fix = null">
+        <form class="form" @onsubmit="SendFix">
+            <div class="form-grid">
+                <label class="field"><span>Punch in</span><input type="time" value="@fix.In" @onchange='e => fix.In = e.Value?.ToString() ?? ""' /></label>
+                <label class="field"><span>Punch out</span><input type="time" value="@fix.Out" @onchange='e => fix.Out = e.Value?.ToString() ?? ""' /></label>
+                <label class="field full"><span>Reason</span><input type="text" maxlength="300" @bind="fix.Reason" placeholder="For example: forgot to punch out" /></label>
+            </div>
+            <p class="muted note">Your manager reviews this. If you give both times, they replace that day's punches.</p>
+            @if (fixError is not null) { <div class="form-error">@fixError</div> }
+            <div class="form-actions">
+                <button type="button" class="btn ghost" @onclick="() => fix = null" disabled="@busy">Cancel</button>
+                <button type="submit" class="btn primary" disabled="@busy">@(busy ? "Sending..." : "Send request")</button>
+            </div>
+        </form>
+    </Modal>
+}
+@if (toast is not null) { <div class="toast">@toast</div> }
+
+@code {
+    class Fix { public DateTime Date { get; set; } public string? In { get; set; } public string? Out { get; set; } public string Reason { get; set; } = ""; }
+
+    TodayInfo? today;
+    MonthInfo? monthData;
+    List<FixRequest> requests = [];
+    DayDetail? dayDetail;
+    Fix? fix;
+    DateTime month = new(DateTime.Today.Year, DateTime.Today.Month, 1);
+    TimeSpan clockOffset;
+    DateTime fetchedAt;
+    PeriodicTimer? ticker;
+    string mode = "Office", note = "";
+    bool loading = true, busy;
+    string? error, punchError, fixError, toast;
+
+    // The clock shows the server's time (the same clock that stamps a punch), ticking locally between refreshes.
+    DateTime Now => DateTime.Now + clockOffset;
+    int WorkedSeconds => today is null ? 0 : today.Day.WorkedSeconds + (today.IsIn ? (int)Math.Max(0, (DateTime.Now - fetchedAt).TotalSeconds) : 0);
+    int Offset => ((int)new DateTime(month.Year, month.Month, 1).DayOfWeek + 6) % 7;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAll();
+        _ = Tick();
+    }
+
+    async Task Tick()
+    {
+        ticker = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        try { while (await ticker.WaitForNextTickAsync()) await InvokeAsync(StateHasChanged); }
+        catch (ObjectDisposedException) { }
+    }
+
+    async Task LoadAll()
+    {
+        loading = true; error = null;
+        try
+        {
+            await LoadToday();
+            monthData = await Api.Month(month.ToString("yyyy-MM"));
+            requests = await Api.MyRequests() ?? [];
+        }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+
+    async Task LoadToday()
+    {
+        today = await Api.Today();
+        if (today is not null) { clockOffset = today.Now - DateTime.Now; fetchedAt = DateTime.Now; }
+    }
+
+    async Task Move(int by)
+    {
+        month = month.AddMonths(by);
+        try { monthData = await Api.Month(month.ToString("yyyy-MM")); } catch (Exception ex) { error = ex.Message; }
+    }
+
+    async Task Toast(string message) { toast = message; StateHasChanged(); await Task.Delay(3500); toast = null; StateHasChanged(); }
+
+    async Task Punch()
+    {
+        busy = true; punchError = null;
+        var wasIn = today?.IsIn == true;
+        var r = await Api.Punch(mode, string.IsNullOrWhiteSpace(note) ? null : note.Trim());
+        busy = false;
+        if (!r.Ok) { punchError = r.Error; return; }
+        note = "";
+        await LoadToday();
+        monthData = await Api.Month(month.ToString("yyyy-MM"));
+        _ = Toast((wasIn ? "Punched out at " : "Punched in at ") + Now.ToString("hh:mm tt"));
+    }
+
+    async Task OpenDay(DayDto d)
+    {
+        try { dayDetail = await Api.Day(d.Date); } catch (Exception ex) { error = ex.Message; }
+    }
+
+    void StartFix()
+    {
+        fix = new Fix { Date = dayDetail!.Day.Date, In = dayDetail.Day.FirstIn?.ToString("HH:mm"), Out = dayDetail.Day.LastOut is not null && !dayDetail.Day.OpenIn ? dayDetail.Day.LastOut.Value.ToString("HH:mm") : null };
+        fixError = null; dayDetail = null;
+    }
+
+    async Task SendFix()
+    {
+        busy = true; fixError = null;
+        var r = await Api.RequestFix(fix!.Date, fix.In, fix.Out, fix.Reason);
+        busy = false;
+        if (!r.Ok) { fixError = r.Error; return; }
+        fix = null;
+        requests = await Api.MyRequests() ?? [];
+        _ = Toast("Correction sent for approval");
+    }
+
+    async Task CancelFix(FixRequest r)
+    {
+        var res = await Api.CancelFix(r.Id);
+        if (res.Ok) { requests = await Api.MyRequests() ?? []; _ = Toast("Request cancelled"); } else { error = res.Error; }
+    }
+
+    public void Dispose() => ticker?.Dispose();
+}
