@@ -9,6 +9,6 @@ public partial class App : Application
 
 	protected override Window CreateWindow(IActivationState? activationState)
 	{
-		return new Window(new MainPage()) { Title = "HRMS", Width = 1440, Height = 900 };
+		return new Window(new MainPage()) { Title = "Growora HRMS", Width = 1440, Height = 900 };
 	}
 }

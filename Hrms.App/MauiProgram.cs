@@ -17,8 +17,8 @@ public static class MauiProgram
 
 		builder.Services.AddMauiBlazorWebView();
 
-		// Android emulators reach the host machine at 10.0.2.2; everything else uses localhost.
-		var apiBase = DeviceInfo.Platform == DevicePlatform.Android ? "http://10.0.2.2:5080" : "http://localhost:5080";
+		// A phone uses the hosted HRMS over HTTPS (its certificate is publicly trusted); everything else uses localhost.
+		var apiBase = DeviceInfo.Platform == DevicePlatform.Android ? "https://hrmsgrowora.runasp.net" : "http://localhost:5080";
 		var auth = new AuthState();
 		builder.Services.AddSingleton(auth);
 

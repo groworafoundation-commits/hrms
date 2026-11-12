@@ -18,3 +18,7 @@ hradmin.pw
 appsettings.*.local.json
 secrets.json
 .hrms/
+
+# release builds
+*.apk
+Apk/

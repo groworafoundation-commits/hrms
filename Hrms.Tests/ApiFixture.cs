@@ -43,7 +43,7 @@ public sealed class ApiFixture : IAsyncLifetime
         // an active employee who has no login yet
         Employee = (await c.ExecuteScalarAsync<string>(@"SELECT TOP 1 e.EmpCode FROM inter01.EmployeeMaster e
             OUTER APPLY (SELECT TOP 1 termdate FROM inter01.EmployeeExtraDetails WHERE EmpCode = e.EmpCode AND ISNULL(deleteflag,0)=0 ORDER BY Id DESC) x
-            WHERE x.termdate IS NULL AND NOT EXISTS (SELECT 1 FROM HRMSINTER.interface.Userdef u WHERE u.userid = e.EmpCode) AND e.EmpCode NOT IN (SELECT EmpCode FROM inter01.EMPLOYEELEAVEDETAILS WHERE ISNULL(Deleteflag,0)=0)
+            WHERE x.termdate IS NULL AND NOT EXISTS (SELECT 1 FROM interface.Userdef u WHERE u.userid = e.EmpCode) AND e.EmpCode NOT IN (SELECT EmpCode FROM inter01.EMPLOYEELEAVEDETAILS WHERE ISNULL(Deleteflag,0)=0)
             ORDER BY e.EmpCode DESC"))!;
         await CreateUser(c, Admin, "HRM-ADM", "all", AdminEmail);
         await CreateUser(c, Manager, "HRM-MGR", "all", null);
@@ -55,7 +55,7 @@ public sealed class ApiFixture : IAsyncLifetime
     public async Task CreateUser(SqlConnection c, string id, string role, string scope, string? email, string? password = Password, bool plainOnly = false)
     {
         extraUsers.Add(id);
-        await c.ExecuteAsync(@"INSERT HRMSINTER.interface.Userdef (userid, username, roleid, password, PasswordHash, MustChange, name, emailid, [disable], CompanyCodes, financialyearcode, Defaultcompany)
+        await c.ExecuteAsync(@"INSERT interface.Userdef (userid, username, roleid, password, PasswordHash, MustChange, name, emailid, [disable], CompanyCodes, financialyearcode, Defaultcompany)
             VALUES (@id, @id, @role, @plain, @hash, 0, @name, @email, 0, 'Launch', '2026', 'Launch')",
             new { id, role, plain = plainOnly ? password : null, hash = plainOnly ? null : Passwords.Hash(password!), name = "Test " + id, email });
         await c.ExecuteAsync("DELETE inter01.AccessUser WHERE UserId = @id", new { id });
@@ -125,7 +125,7 @@ public sealed class ApiFixture : IAsyncLifetime
             });
         await Step("email", () => c.ExecuteAsync("DELETE hrms.EmailOutbox WHERE ToUser IN @users OR ToAddress LIKE '%@example.test'", new { users }));
         await Step("access lists", () => c.ExecuteAsync("DELETE inter01.AccessUser WHERE UserId IN @users", new { users }));
-        await Step("users", () => c.ExecuteAsync("DELETE HRMSINTER.interface.Userdef WHERE userid IN @users", new { users }));
+        await Step("users", () => c.ExecuteAsync("DELETE interface.Userdef WHERE userid IN @users", new { users }));
         if (reportErrors && errors.Count > 0) throw new InvalidOperationException("Test cleanup problems: " + string.Join(" | ", errors));
     }
 

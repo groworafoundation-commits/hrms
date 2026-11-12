@@ -15,7 +15,7 @@ else
 
     <div class="main">
         <header class="topbar">
-            <span class="topbar-logo"><Icon Name="users" Size="20" /> HRMS</span>
+            <span class="topbar-logo"><Icon Name="users" Size="20" /> Growora HRMS</span>
             <label class="search">
                 <Icon Name="search" Size="18" />
                 <input type="text" placeholder="Search employees, leave, attendance, projects..." />
@@ -59,14 +59,41 @@ else
         @if (Auth.Can(AuthState.EmployeeMaster)) { <NavLink href="employees"><Icon Name="users" /><span>Employees</span></NavLink> }
         @if (Auth.Can(AuthState.Leave)) { <NavLink href="leave"><Icon Name="calendar" /><span>Leave</span></NavLink> }
         @if (Auth.CanAny(AuthState.Grade, AuthState.Variable, AuthState.Loans, AuthState.Reports, "164")) { <NavLink href="payroll"><Icon Name="wallet" /><span>Payroll</span></NavLink> }
-        <button type="button" class="nav-out" @onclick="SignOut"><Icon Name="logout" /><span>Sign out</span></button>
+        <button type="button" class="nav-out" @onclick="() => more = true"><Icon Name="grid" /><span>More</span></button>
     </nav>
+
+    @if (more)
+    {
+        <div class="more-back" @onclick="() => more = false">
+            <div class="more-sheet" @onclick:stopPropagation="true">
+                <div class="more-grab"></div>
+                <div class="more-head">
+                    <Avatar Name="@Auth.User!.FullName" Size="44" />
+                    <div><strong>@Fmt.Title(Auth.User!.FullName)</strong><small>@Auth.User!.UserId | @Auth.User!.RoleName</small><small>@Auth.User!.Company | FY @Auth.User!.FinYear</small></div>
+                </div>
+                <div class="more-grid" @onclick="() => more = false">
+                    @foreach (var item in NavMenu.Items.Where(i => i.Options is null || Auth.CanAny(i.Options)))
+                    {
+                        <NavLink class="more-item" href="@item.Href" Match="@(item.Href == "" ? NavLinkMatch.All : NavLinkMatch.Prefix)"><Icon Name="@item.Icon" Size="22" /><span>@item.Label</span></NavLink>
+                    }
+                    @foreach (var m in (Auth.User?.Menu ?? []).OrderBy(x => x.Sequence))
+                    {
+                        <NavLink class="more-item" href="@m.Route" Match="@(m.Route == "my" ? NavLinkMatch.All : NavLinkMatch.Prefix)"><Icon Name="@m.Icon" Size="22" /><span>@m.Name</span></NavLink>
+                    }
+                </div>
+                <div class="more-actions">
+                    <button type="button" class="btn ghost" @onclick='() => { more = false; Nav.NavigateTo("change-password"); }'><Icon Name="key" Size="16" /> Change password</button>
+                    <button type="button" class="btn ghost danger" @onclick="SignOut"><Icon Name="logout" Size="16" /> Sign out</button>
+                </div>
+            </div>
+        </div>
+    }
 </div>
 }
 
 @code {
     ErrorBoundary? boundary;
-    bool menu;
+    bool menu, more;
 
     protected override void OnInitialized()
     {
@@ -83,7 +110,7 @@ else
 
     async Task SignOut()
     {
-        menu = false;
+        menu = more = false;
         await Api.Logout();
         Auth.SignOut();
     }

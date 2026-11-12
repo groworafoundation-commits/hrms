@@ -41,7 +41,7 @@ public static class Notifier
         if (string.IsNullOrWhiteSpace(userId)) return;
         await c.ExecuteAsync("INSERT hrms.Notification (UserId, Kind, Title, Body, Link) VALUES (@userId, @kind, @title, @body, @link)",
             new { userId, kind, title = Trim(title, 200), body = Trim(body, 500), link }, tx);
-        var email = await c.ExecuteScalarAsync<string?>("SELECT TOP 1 emailid FROM HRMSINTER.interface.Userdef WHERE userid = @userId AND ISNULL([disable],0) = 0", new { userId }, tx);
+        var email = await c.ExecuteScalarAsync<string?>("SELECT TOP 1 emailid FROM interface.Userdef WHERE userid = @userId AND ISNULL([disable],0) = 0", new { userId }, tx);
         if (!string.IsNullOrWhiteSpace(email) && email.Contains('@'))
             await c.ExecuteAsync("INSERT hrms.EmailOutbox (ToUser, ToAddress, Subject, Body) VALUES (@userId, @email, @subject, @body)",
                 new { userId, email = email.Trim(), subject = Trim(title, 200), body = (body ?? "") + (link is null ? "" : "\n\nOpen HRMS: " + link) }, tx);
@@ -51,8 +51,8 @@ public static class Notifier
 
     // Everyone who holds a menu option (for example attendance corrections) and can see this employee.
     public static async Task<List<string>> HoldersOf(SqlConnection c, SqlTransaction? tx, string optionId, string employee) =>
-        (await c.QueryAsync<string>(@"SELECT DISTINCT u.userid FROM HRMSINTER.interface.Userdef u
-            JOIN HRMSINTER.interface.accessright a ON a.roleid = u.roleid AND a.optionid = @optionId AND CAST(a.access AS int) = 1
+        (await c.QueryAsync<string>(@"SELECT DISTINCT u.userid FROM interface.Userdef u
+            JOIN interface.accessright a ON a.roleid = u.roleid AND a.optionid = @optionId AND CAST(a.access AS int) = 1
             JOIN inter01.AccessUser s ON s.UserId = u.userid AND s.AccessUser = @employee
             WHERE ISNULL(u.[disable],0) = 0 AND u.userid <> @employee", new { optionId, employee }, tx)).ToList();
 }

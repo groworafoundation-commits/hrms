@@ -56,12 +56,12 @@ public static class Passwords
     {
         await using var c = db.OpenWrite();
         var rows = (await c.QueryAsync<(string UserId, string Password)>(
-            "SELECT userid AS UserId, password AS Password FROM HRMSINTER.interface.Userdef WHERE PasswordHash IS NULL AND password IS NOT NULL AND LEN(password) > 0")).ToList();
+            "SELECT userid AS UserId, password AS Password FROM interface.Userdef WHERE PasswordHash IS NULL AND password IS NOT NULL AND LEN(password) > 0")).ToList();
         if (rows.Count == 0) return 0;
         var hashed = new (string UserId, string Hash)[rows.Count];
         Parallel.For(0, rows.Count, i => hashed[i] = (rows[i].UserId, Hash(rows[i].Password)));
         foreach (var (userId, hash) in hashed)
-            await c.ExecuteAsync("UPDATE HRMSINTER.interface.Userdef SET PasswordHash=@hash, password=NULL, PasswordChangedAt=GETDATE() WHERE userid=@userId", new { userId, hash });
+            await c.ExecuteAsync("UPDATE interface.Userdef SET PasswordHash=@hash, password=NULL, PasswordChangedAt=GETDATE() WHERE userid=@userId", new { userId, hash });
         return rows.Count;
     }
 }

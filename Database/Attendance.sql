@@ -76,7 +76,7 @@ IF NOT EXISTS (SELECT 1 FROM hrms.AttShift)
     VALUES ('General shift', '09:00', '18:00', 10, 480, 240, 'Sun', 1);
 
 -- ===== menus and rights (HRMSINTER) =====
-UPDATE HRMSINTER.interface.interface SET SEQUENCE = CASE OPTIONID WHEN 'H101' THEN 1 WHEN 'H106' THEN 2 WHEN 'H102' THEN 3 WHEN 'H103' THEN 4 WHEN 'H104' THEN 5 WHEN 'H105' THEN 6 ELSE SEQUENCE END
+UPDATE interface.interface SET SEQUENCE = CASE OPTIONID WHEN 'H101' THEN 1 WHEN 'H106' THEN 2 WHEN 'H102' THEN 3 WHEN 'H103' THEN 4 WHEN 'H104' THEN 5 WHEN 'H105' THEN 6 ELSE SEQUENCE END
 WHERE OPTIONID IN ('H101','H102','H103','H104','H105','H106');
 
 DECLARE @o TABLE (id nvarchar(20), name nvarchar(80), route nvarchar(500), icon nvarchar(100), seq int);
@@ -86,9 +86,9 @@ INSERT @o VALUES
  ('H206', 'Attendance Requests', 'admin/attendance/requests','check',   25),
  ('H207', 'Shifts and Holidays', 'admin/attendance/setup',   'settings',26);
 
-INSERT HRMSINTER.interface.interface (OPTIONID, OPTIONNAME, ACTIVESTAT, SEQUENCE, LEVELCODE, VISIBLE, PRGNAME, SUBMENU, Appid, AuthLevel, PICTURE1, ReportPage, htmleditor, paytermspage, bizapirequired, optimize, sendmail)
+INSERT interface.interface (OPTIONID, OPTIONNAME, ACTIVESTAT, SEQUENCE, LEVELCODE, VISIBLE, PRGNAME, SUBMENU, Appid, AuthLevel, PICTURE1, ReportPage, htmleditor, paytermspage, bizapirequired, optimize, sendmail)
 SELECT id, name, '1', seq, 'HRMS', '1', route, '0', 'HRMS', 0, icon, 0, 0, '', 0, 0, 0 FROM @o o
-WHERE NOT EXISTS (SELECT 1 FROM HRMSINTER.interface.interface i WHERE i.OPTIONID = o.id);
+WHERE NOT EXISTS (SELECT 1 FROM interface.interface i WHERE i.OPTIONID = o.id);
 
 -- (role, option, view, add, modify, delete, print, level): punch = add, correction request = modify, cancel request = delete
 DECLARE @r TABLE (role nvarchar(16), opt nvarchar(16), v bit, a bit, m bit, d bit, p bit, lvl int);
@@ -97,11 +97,11 @@ INSERT @r VALUES
  ('HRM-MGR','H106',1,1,1,1,0,10), ('HRM-MGR','H205',1,1,1,1,1,10), ('HRM-MGR','H206',1,1,1,1,0,10), ('HRM-MGR','H207',1,1,1,1,0,10),
  ('HRM-ADM','H106',1,1,1,1,0,9),  ('HRM-ADM','H205',1,1,1,1,1,9),  ('HRM-ADM','H206',1,1,1,1,1,9),  ('HRM-ADM','H207',1,1,1,1,1,9);
 
-INSERT HRMSINTER.interface.accessright (roleid, optionid, addd, modifyy, delete1, access, [level], Prints, SinglePush)
+INSERT interface.accessright (roleid, optionid, addd, modifyy, delete1, access, [level], Prints, SinglePush)
 SELECT role, opt, a, m, d, v, lvl, p, 0 FROM @r x
-WHERE NOT EXISTS (SELECT 1 FROM HRMSINTER.interface.accessright ar WHERE ar.roleid = x.role AND ar.optionid = x.opt);
+WHERE NOT EXISTS (SELECT 1 FROM interface.accessright ar WHERE ar.roleid = x.role AND ar.optionid = x.opt);
 
 SELECT 'tables' AS what, COUNT(*) AS n FROM sys.tables WHERE schema_id = SCHEMA_ID('hrms')
 UNION ALL SELECT 'shifts', COUNT(*) FROM hrms.AttShift
-UNION ALL SELECT 'menus', COUNT(*) FROM HRMSINTER.interface.interface WHERE OPTIONID IN ('H106','H205','H206','H207')
-UNION ALL SELECT 'rights', COUNT(*) FROM HRMSINTER.interface.accessright WHERE optionid IN ('H106','H205','H206','H207');
+UNION ALL SELECT 'menus', COUNT(*) FROM interface.interface WHERE OPTIONID IN ('H106','H205','H206','H207')
+UNION ALL SELECT 'rights', COUNT(*) FROM interface.accessright WHERE optionid IN ('H106','H205','H206','H207');

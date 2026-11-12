@@ -322,7 +322,7 @@ ORDER BY f.resultdate", "No document expiry transactions exist for this company 
         {
             await using var c = db.Open();
             var row = await c.QueryFirstOrDefaultAsync(@"SELECT companyname, address1, address2, address3, address4, Phone, Fax, Email, CompanyVatno, BaseCurrency, CompanyLogo
-                FROM HRMSINTER.interface.CompanySetUp WHERE CompanyCode = @code", new { code = session.CompanyCode }) as IDictionary<string, object>;
+                FROM interface.CompanySetUp WHERE CompanyCode = @code", new { code = session.CompanyCode }) as IDictionary<string, object>;
             if (row is null) return Results.Ok(new CompanyInfo(session.CompanyCode, [], null, null, null, null, "AED", null));
             string? Str(string k) => row.TryGetValue(k, out var v) && v is string s2 && !string.IsNullOrWhiteSpace(s2) ? s2.Trim().Trim(',') : null;
             string? logo = null;

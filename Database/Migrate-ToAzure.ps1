@@ -1,13 +1,15 @@
-﻿# One-time copy of the local HRMSINTER and HRMSMAIN databases into ONE Azure SQL database named HRMSINTER.
-# Azure SQL cannot query across databases, but a three-part name is allowed when it names the current database,
-# so the API's HRMSINTER.interface.* queries keep working. Tables of the two databases live in different schemas
-# (interface / inter01 / hrms), so they do not clash. Source databases are only read.
-# Usage: powershell -File Migrate-ToAzure.ps1 -LocalPassword <sa> -AzureServer <x.database.windows.net> -AzureUser <u> -AzurePassword <p>
+﻿# One-time copy of the local HRMSINTER and HRMSMAIN databases into ONE database on a host that cannot query across databases
+# (Azure SQL, MonsterASP). The API uses plain interface.* / inter01.* / hrms.* names, so one database holds everything:
+# the tables of the two source databases live in different schemas and do not clash. Source databases are only read.
+# Azure:   powershell -File Migrate-ToAzure.ps1 -LocalPassword <sa> -AzureServer <x.database.windows.net> -AzureUser <u> -AzurePassword <p>
+# Any SQL Server (for example an empty local database to back up and restore on a host that only accepts backups):
+#          powershell -File Migrate-ToAzure.ps1 -LocalPassword <sa> -DestConnectionString "<connection string of the empty target>"
 param(
     [Parameter(Mandatory)][string]$LocalPassword,
-    [Parameter(Mandatory)][string]$AzureServer,
-    [Parameter(Mandatory)][string]$AzureUser,
-    [Parameter(Mandatory)][string]$AzurePassword,
+    [string]$DestConnectionString,
+    [string]$AzureServer,
+    [string]$AzureUser,
+    [string]$AzurePassword,
     [string]$LocalServer = 'np:\\.\pipe\MSSQL$MSSQLSERVER01\sql\query',
     [string[]]$SkipData = @('inter01.inv_head', 'inter01.inv_footer', 'inter01.UserwiseTransaction'),
     [string]$Log = "$PSScriptRoot\migrate-azure.log"
@@ -94,10 +96,11 @@ function CopyTable($src, $dst, $full) {
 }
 
 
-function Rewrite($text) { $text -replace '(?i)\bHRMSMAIN\b', 'HRMSINTER' }
+function Rewrite($text) { $text -replace '(?i)\bHRMS(INTER|MAIN)\.', '' }   # one database on the host: drop the database prefix
 
 Remove-Item $Log -ErrorAction SilentlyContinue
-$dst = OpenCs "Server=tcp:$AzureServer,1433;Database=HRMSINTER;User ID=$AzureUser;Password=$AzurePassword;Encrypt=True;Connect Timeout=60"
+if ($DestConnectionString) { $dst = OpenCs $DestConnectionString }
+else { $dst = OpenCs "Server=tcp:$AzureServer,1433;Database=HRMSINTER;User ID=$AzureUser;Password=$AzurePassword;Encrypt=True;Connect Timeout=60" }
 foreach ($db in 'HRMSINTER', 'HRMSMAIN') {
     Say "== $db"
     $src = OpenCs "Data Source=$LocalServer;Initial Catalog=$db;User ID=sa;Password=$LocalPassword;TrustServerCertificate=True;Connect Timeout=30"

@@ -63,7 +63,7 @@ SELECT u.userid AS UserId, u.username AS UserName, u.name AS FullName, u.roleid 
        CAST(ISNULL(u.[disable],0) AS bit) AS Disabled, e.EmpCode AS EmployeeCode, e.Empname AS EmployeeName,
        (SELECT COUNT(*) FROM inter01.AccessUser a WHERE a.UserId = u.userid) AS Scope,
        CAST(CASE WHEN u.LockedUntil > GETDATE() THEN 1 ELSE 0 END AS bit) AS Locked, CAST(ISNULL(u.MustChange,0) AS bit) AS MustChange
-FROM HRMSINTER.interface.Userdef u LEFT JOIN HRMSINTER.interface.Roledef r ON r.roleid = u.roleid LEFT JOIN inter01.EmployeeMaster e ON e.EmpCode = u.userid
+FROM interface.Userdef u LEFT JOIN interface.Roledef r ON r.roleid = u.roleid LEFT JOIN inter01.EmployeeMaster e ON e.EmpCode = u.userid
 WHERE (@q IS NULL OR u.userid LIKE @q OR u.username LIKE @q OR u.name LIKE @q OR e.Empname LIKE @q) AND (@role IS NULL OR u.roleid = @role)
 ORDER BY u.userid", new { q = string.IsNullOrWhiteSpace(q) ? null : $"%{q.Trim()}%", role = Nz(role) })).ToList();
         });
@@ -72,7 +72,7 @@ ORDER BY u.userid", new { q = string.IsNullOrWhiteSpace(q) ? null : $"%{q.Trim()
         {
             await using var c = db.Open();
             return (await c.QueryAsync<Plain>(@"SELECT e.EmpCode AS Id, e.Empname AS Name FROM inter01.EmployeeMaster e
-                WHERE NOT EXISTS (SELECT 1 FROM HRMSINTER.interface.Userdef u WHERE u.userid = e.EmpCode) ORDER BY e.Empname")).ToList();
+                WHERE NOT EXISTS (SELECT 1 FROM interface.Userdef u WHERE u.userid = e.EmpCode) ORDER BY e.Empname")).ToList();
         });
 
         app.MapPost("/api/admin/users", async (Db db, HttpContext ctx, UserInput x, bool dryRun = false) => await Writes.Run(db, dryRun, async (c, tx) =>
@@ -82,10 +82,10 @@ ORDER BY u.userid", new { q = string.IsNullOrWhiteSpace(q) ? null : $"%{q.Trim()
             if (id.Length == 0 || id.Length > 20) throw new ApiException("User ID is required (up to 20 characters).");
             if (string.IsNullOrWhiteSpace(x.UserName)) throw new ApiException("Login name is required.");
             if (Passwords.Policy(x.Password) is { } problem) throw new ApiException(problem);
-            if (await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM HRMSINTER.interface.Userdef WHERE userid=@id OR username=@id OR userid=@un OR username=@un", new { id, un = x.UserName.Trim() }, tx) > 0)
+            if (await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM interface.Userdef WHERE userid=@id OR username=@id OR userid=@un OR username=@un", new { id, un = x.UserName.Trim() }, tx) > 0)
                 throw new ApiException("That user ID or login name is already in use.", 409);
-            if (await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM HRMSINTER.interface.Roledef WHERE roleid=@r", new { r = x.RoleId }, tx) == 0) throw new ApiException("Choose a role.");
-            await c.ExecuteAsync(@"INSERT HRMSINTER.interface.Userdef (userid, username, roleid, password, PasswordHash, MustChange, PasswordChangedAt, emailid, mobno, name, [disable], CompanyCodes, financialyearcode, Defaultcompany)
+            if (await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM interface.Roledef WHERE roleid=@r", new { r = x.RoleId }, tx) == 0) throw new ApiException("Choose a role.");
+            await c.ExecuteAsync(@"INSERT interface.Userdef (userid, username, roleid, password, PasswordHash, MustChange, PasswordChangedAt, emailid, mobno, name, [disable], CompanyCodes, financialyearcode, Defaultcompany)
                 VALUES (@id, @un, @role, NULL, @pw, 1, GETDATE(), @email, @mobile, @name, @dis, @companies, @fy, @company)",
                 new { id, un = x.UserName.Trim(), role = x.RoleId, pw = Passwords.Hash(x.Password), email = Nz(x.Email), mobile = Nz(x.Mobile), name = Nz(x.FullName) ?? x.UserName.Trim(), dis = x.Disabled,
                       companies = string.Join(",", me.Companies), fy = me.FinYear, company = me.Company }, tx);
@@ -99,11 +99,11 @@ ORDER BY u.userid", new { q = string.IsNullOrWhiteSpace(q) ? null : $"%{q.Trim()
             if (string.Equals(id, me.UserId, StringComparison.OrdinalIgnoreCase) && x.Disabled) throw new ApiException("You cannot disable your own account.", 409);
             if (string.IsNullOrWhiteSpace(x.UserName)) throw new ApiException("Login name is required.");
             if (!string.IsNullOrEmpty(x.Password) && Passwords.Policy(x.Password) is { } problem) throw new ApiException(problem);
-            if (await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM HRMSINTER.interface.Userdef WHERE userid=@id", new { id }, tx) == 0) throw new ApiException("User not found.", 404);
-            if (await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM HRMSINTER.interface.Userdef WHERE userid<>@id AND (username=@un OR userid=@un)", new { id, un = x.UserName.Trim() }, tx) > 0)
+            if (await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM interface.Userdef WHERE userid=@id", new { id }, tx) == 0) throw new ApiException("User not found.", 404);
+            if (await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM interface.Userdef WHERE userid<>@id AND (username=@un OR userid=@un)", new { id, un = x.UserName.Trim() }, tx) > 0)
                 throw new ApiException("That login name is already in use.", 409);
-            if (await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM HRMSINTER.interface.Roledef WHERE roleid=@r", new { r = x.RoleId }, tx) == 0) throw new ApiException("Choose a role.");
-            await c.ExecuteAsync(@"UPDATE HRMSINTER.interface.Userdef SET username=@un, roleid=@role, emailid=@email, mobno=@mobile, name=@name, [disable]=@dis,
+            if (await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM interface.Roledef WHERE roleid=@r", new { r = x.RoleId }, tx) == 0) throw new ApiException("Choose a role.");
+            await c.ExecuteAsync(@"UPDATE interface.Userdef SET username=@un, roleid=@role, emailid=@email, mobno=@mobile, name=@name, [disable]=@dis,
                 PasswordHash = CASE WHEN @pw IS NULL THEN PasswordHash ELSE @pw END, password = CASE WHEN @pw IS NULL THEN password ELSE NULL END,
                 MustChange = CASE WHEN @pw IS NULL THEN MustChange ELSE 1 END, FailedLogins = CASE WHEN @pw IS NULL THEN FailedLogins ELSE 0 END, LockedUntil = CASE WHEN @pw IS NULL THEN LockedUntil ELSE NULL END WHERE userid=@id",
                 new { id, un = x.UserName.Trim(), role = x.RoleId, email = Nz(x.Email), mobile = Nz(x.Mobile), name = Nz(x.FullName) ?? x.UserName.Trim(), dis = x.Disabled, pw = string.IsNullOrEmpty(x.Password) ? null : Passwords.Hash(x.Password) }, tx);
@@ -115,7 +115,7 @@ ORDER BY u.userid", new { q = string.IsNullOrWhiteSpace(q) ? null : $"%{q.Trim()
 
         app.MapPost("/api/admin/users/{id}/unlock", async (Db db, string id, bool dryRun = false) => await Writes.Run(db, dryRun, async (c, tx) =>
         {
-            if (await c.ExecuteAsync("UPDATE HRMSINTER.interface.Userdef SET FailedLogins=0, LockedUntil=NULL WHERE userid=@id", new { id }, tx) == 0) throw new ApiException("User not found.", 404);
+            if (await c.ExecuteAsync("UPDATE interface.Userdef SET FailedLogins=0, LockedUntil=NULL WHERE userid=@id", new { id }, tx) == 0) throw new ApiException("User not found.", 404);
             return new { UserId = id };
         }));
 
@@ -124,7 +124,7 @@ ORDER BY u.userid", new { q = string.IsNullOrWhiteSpace(q) ? null : $"%{q.Trim()
         {
             await using var c = db.Open();
             return (await c.QueryAsync<RoleDto>(@"SELECT r.roleid AS RoleId, r.rolename AS RoleName, CAST(ISNULL(r.authlevel,0) AS int) AS AuthLevel,
-                (SELECT COUNT(*) FROM HRMSINTER.interface.Userdef u WHERE u.roleid = r.roleid) AS Users FROM HRMSINTER.interface.Roledef r ORDER BY r.rolename")).ToList();
+                (SELECT COUNT(*) FROM interface.Userdef u WHERE u.roleid = r.roleid) AS Users FROM interface.Roledef r ORDER BY r.rolename")).ToList();
         });
 
         app.MapPost("/api/admin/roles", async (Db db, RoleInput x, bool dryRun = false) => await Writes.Run(db, dryRun, async (c, tx) =>
@@ -132,11 +132,11 @@ ORDER BY u.userid", new { q = string.IsNullOrWhiteSpace(q) ? null : $"%{q.Trim()
             var id = x.RoleId?.Trim() ?? "";
             if (id.Length == 0 || id.Length > 8) throw new ApiException("Role ID is required (up to 8 characters).");
             if (string.IsNullOrWhiteSpace(x.RoleName)) throw new ApiException("Role name is required.");
-            if (await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM HRMSINTER.interface.Roledef WHERE roleid=@id", new { id }, tx) > 0) throw new ApiException("That role ID already exists.", 409);
-            await c.ExecuteAsync("INSERT HRMSINTER.interface.Roledef (roleid, rolename, authlevel, Discount, Transactions) VALUES (@id, @name, @lvl, 0, '0')", new { id, name = x.RoleName.Trim(), lvl = x.AuthLevel }, tx);
+            if (await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM interface.Roledef WHERE roleid=@id", new { id }, tx) > 0) throw new ApiException("That role ID already exists.", 409);
+            await c.ExecuteAsync("INSERT interface.Roledef (roleid, rolename, authlevel, Discount, Transactions) VALUES (@id, @name, @lvl, 0, '0')", new { id, name = x.RoleName.Trim(), lvl = x.AuthLevel }, tx);
             if (!string.IsNullOrWhiteSpace(x.CopyFrom))
-                await c.ExecuteAsync(@"INSERT HRMSINTER.interface.accessright (roleid, optionid, addd, modifyy, delete1, access, [level], Prints, SinglePush)
-                    SELECT @id, optionid, addd, modifyy, delete1, access, [level], Prints, SinglePush FROM HRMSINTER.interface.accessright WHERE roleid=@from
+                await c.ExecuteAsync(@"INSERT interface.accessright (roleid, optionid, addd, modifyy, delete1, access, [level], Prints, SinglePush)
+                    SELECT @id, optionid, addd, modifyy, delete1, access, [level], Prints, SinglePush FROM interface.accessright WHERE roleid=@from
                     AND (optionid LIKE 'H%' OR optionid IN (" + ManagedErp + "))", new { id, from = x.CopyFrom }, tx);
             return new { RoleId = id };
         }));
@@ -144,7 +144,7 @@ ORDER BY u.userid", new { q = string.IsNullOrWhiteSpace(q) ? null : $"%{q.Trim()
         app.MapPut("/api/admin/roles/{id}", async (Db db, string id, RoleInput x, bool dryRun = false) => await Writes.Run(db, dryRun, async (c, tx) =>
         {
             if (string.IsNullOrWhiteSpace(x.RoleName)) throw new ApiException("Role name is required.");
-            if (await c.ExecuteAsync("UPDATE HRMSINTER.interface.Roledef SET rolename=@name, authlevel=@lvl WHERE roleid=@id", new { id, name = x.RoleName.Trim(), lvl = x.AuthLevel }, tx) == 0)
+            if (await c.ExecuteAsync("UPDATE interface.Roledef SET rolename=@name, authlevel=@lvl WHERE roleid=@id", new { id, name = x.RoleName.Trim(), lvl = x.AuthLevel }, tx) == 0)
                 throw new ApiException("Role not found.", 404);
             return new { RoleId = id };
         }));
@@ -156,22 +156,22 @@ ORDER BY u.userid", new { q = string.IsNullOrWhiteSpace(q) ? null : $"%{q.Trim()
 SELECT i.OPTIONID AS OptionId, i.OPTIONNAME AS Name, CASE WHEN i.LEVELCODE = 'HRMS' THEN 'HRMS' ELSE 'ERP payroll' END AS [Group],
        CAST(ISNULL(a.access,0) AS bit) AS [View], CAST(ISNULL(a.addd,0) AS bit) AS [Add], CAST(ISNULL(a.modifyy,0) AS bit) AS [Edit],
        CAST(ISNULL(a.delete1,0) AS bit) AS [Delete], CAST(ISNULL(a.Prints,0) AS bit) AS [Print], CAST(ISNULL(a.[level],0) AS int) AS [Level]
-FROM HRMSINTER.interface.interface i LEFT JOIN HRMSINTER.interface.accessright a ON a.roleid = @id AND a.optionid = i.OPTIONID
+FROM interface.interface i LEFT JOIN interface.accessright a ON a.roleid = @id AND a.optionid = i.OPTIONID
 WHERE i.LEVELCODE = 'HRMS' OR i.OPTIONID IN (" + ManagedErp + @")
 ORDER BY CASE WHEN i.LEVELCODE = 'HRMS' THEN 0 ELSE 1 END, i.SEQUENCE", new { id })).ToList();
         });
 
         app.MapPut("/api/admin/roles/{id}/rights", async (Db db, AuthStore store, HttpContext ctx, string id, List<RightInput> rights, bool dryRun = false) => await Writes.Run(db, dryRun, async (c, tx) =>
         {
-            if (await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM HRMSINTER.interface.Roledef WHERE roleid=@id", new { id }, tx) == 0) throw new ApiException("Role not found.", 404);
-            var allowed = (await c.QueryAsync<string>("SELECT OPTIONID FROM HRMSINTER.interface.interface WHERE LEVELCODE='HRMS' OR OPTIONID IN (" + ManagedErp + ")", transaction: tx)).ToHashSet();
+            if (await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM interface.Roledef WHERE roleid=@id", new { id }, tx) == 0) throw new ApiException("Role not found.", 404);
+            var allowed = (await c.QueryAsync<string>("SELECT OPTIONID FROM interface.interface WHERE LEVELCODE='HRMS' OR OPTIONID IN (" + ManagedErp + ")", transaction: tx)).ToHashSet();
             foreach (var r in rights)
             {
                 if (!allowed.Contains(r.OptionId)) throw new ApiException($"Option {r.OptionId} cannot be edited here.");
                 var p = new { id, opt = r.OptionId, v = r.View, a = r.Add && r.View, m = r.Edit && r.View, d = r.Delete && r.View, pr = r.Print && r.View, lvl = Math.Clamp(r.Level, 0, 10) };
-                var n = await c.ExecuteAsync("UPDATE HRMSINTER.interface.accessright SET access=@v, addd=@a, modifyy=@m, delete1=@d, Prints=@pr, [level]=@lvl WHERE roleid=@id AND optionid=@opt", p, tx);
+                var n = await c.ExecuteAsync("UPDATE interface.accessright SET access=@v, addd=@a, modifyy=@m, delete1=@d, Prints=@pr, [level]=@lvl WHERE roleid=@id AND optionid=@opt", p, tx);
                 if (n == 0)
-                    await c.ExecuteAsync("INSERT HRMSINTER.interface.accessright (roleid, optionid, addd, modifyy, delete1, access, [level], Prints, SinglePush) VALUES (@id, @opt, @a, @m, @d, @v, @lvl, @pr, 0)", p, tx);
+                    await c.ExecuteAsync("INSERT interface.accessright (roleid, optionid, addd, modifyy, delete1, access, [level], Prints, SinglePush) VALUES (@id, @opt, @a, @m, @d, @v, @lvl, @pr, 0)", p, tx);
             }
             // Rights are read when someone signs in, so everyone else in this role signs in again to pick up the change.
             store.RevokeWhere(u => u.RoleId == id, Token(ctx));
@@ -185,7 +185,7 @@ ORDER BY CASE WHEN i.LEVELCODE = 'HRMS' THEN 0 ELSE 1 END, i.SEQUENCE", new { id
             return (await c.QueryAsync<MenuDto>(@"SELECT OPTIONID AS Id, OPTIONNAME AS Name, PRGNAME AS Route, ISNULL(PICTURE1,'grid') AS Icon, ISNULL(SEQUENCE,0) AS Sequence,
                 CAST(CASE WHEN ISNULL(ACTIVESTAT,'1') = '1' THEN 1 ELSE 0 END AS bit) AS Active,
                 CAST(CASE WHEN TRY_CAST(SUBSTRING(OPTIONID,2,10) AS int) >= 300 THEN 1 ELSE 0 END AS bit) AS Custom
-                FROM HRMSINTER.interface.interface WHERE LEVELCODE = 'HRMS' ORDER BY SEQUENCE, OPTIONID")).ToList();
+                FROM interface.interface WHERE LEVELCODE = 'HRMS' ORDER BY SEQUENCE, OPTIONID")).ToList();
         });
 
         static void CheckMenu(MenuInput x)
@@ -197,9 +197,9 @@ ORDER BY CASE WHEN i.LEVELCODE = 'HRMS' THEN 0 ELSE 1 END, i.SEQUENCE", new { id
         app.MapPost("/api/admin/menus", async (Db db, MenuInput x, bool dryRun = false) => await Writes.Run(db, dryRun, async (c, tx) =>
         {
             CheckMenu(x);
-            var next = await c.ExecuteScalarAsync<int>("SELECT ISNULL(MAX(TRY_CAST(SUBSTRING(OPTIONID,2,10) AS int)),0) FROM HRMSINTER.interface.interface WHERE OPTIONID LIKE 'H[0-9]%' AND TRY_CAST(SUBSTRING(OPTIONID,2,10) AS int) >= 300", transaction: tx);
+            var next = await c.ExecuteScalarAsync<int>("SELECT ISNULL(MAX(TRY_CAST(SUBSTRING(OPTIONID,2,10) AS int)),0) FROM interface.interface WHERE OPTIONID LIKE 'H[0-9]%' AND TRY_CAST(SUBSTRING(OPTIONID,2,10) AS int) >= 300", transaction: tx);
             var id = "H" + Math.Max(301, next + 1);
-            await c.ExecuteAsync(@"INSERT HRMSINTER.interface.interface (OPTIONID, OPTIONNAME, ACTIVESTAT, SEQUENCE, LEVELCODE, VISIBLE, PRGNAME, SUBMENU, Appid, AuthLevel, PICTURE1, ReportPage, htmleditor, paytermspage, bizapirequired, optimize, sendmail)
+            await c.ExecuteAsync(@"INSERT interface.interface (OPTIONID, OPTIONNAME, ACTIVESTAT, SEQUENCE, LEVELCODE, VISIBLE, PRGNAME, SUBMENU, Appid, AuthLevel, PICTURE1, ReportPage, htmleditor, paytermspage, bizapirequired, optimize, sendmail)
                 VALUES (@id, @name, @act, @seq, 'HRMS', '1', @route, '0', 'HRMS', 0, @icon, 0, 0, '', 0, 0, 0)",
                 new { id, name = x.Name.Trim(), act = x.Active ? "1" : "0", seq = x.Sequence, route = x.Route.Trim(), icon = Nz(x.Icon) ?? "grid" }, tx);
             return new { Id = id };
@@ -208,7 +208,7 @@ ORDER BY CASE WHEN i.LEVELCODE = 'HRMS' THEN 0 ELSE 1 END, i.SEQUENCE", new { id
         app.MapPut("/api/admin/menus/{id}", async (Db db, string id, MenuInput x, bool dryRun = false) => await Writes.Run(db, dryRun, async (c, tx) =>
         {
             CheckMenu(x);
-            if (await c.ExecuteAsync(@"UPDATE HRMSINTER.interface.interface SET OPTIONNAME=@name, ACTIVESTAT=@act, SEQUENCE=@seq, PRGNAME=@route, PICTURE1=@icon WHERE OPTIONID=@id AND LEVELCODE='HRMS'",
+            if (await c.ExecuteAsync(@"UPDATE interface.interface SET OPTIONNAME=@name, ACTIVESTAT=@act, SEQUENCE=@seq, PRGNAME=@route, PICTURE1=@icon WHERE OPTIONID=@id AND LEVELCODE='HRMS'",
                 new { id, name = x.Name.Trim(), act = x.Active ? "1" : "0", seq = x.Sequence, route = x.Route.Trim(), icon = Nz(x.Icon) ?? "grid" }, tx) == 0)
                 throw new ApiException("Menu not found.", 404);
             return new { Id = id };
@@ -217,8 +217,8 @@ ORDER BY CASE WHEN i.LEVELCODE = 'HRMS' THEN 0 ELSE 1 END, i.SEQUENCE", new { id
         app.MapDelete("/api/admin/menus/{id}", async (Db db, string id, bool dryRun = false) => await Writes.Run(db, dryRun, async (c, tx) =>
         {
             if (!(int.TryParse(id.AsSpan(1), out var n) && n >= 300)) throw new ApiException("Built-in menus can be renamed, re-ordered or switched off, but not deleted.", 409);
-            await c.ExecuteAsync("DELETE HRMSINTER.interface.accessright WHERE optionid=@id", new { id }, tx);
-            if (await c.ExecuteAsync("DELETE HRMSINTER.interface.interface WHERE OPTIONID=@id AND LEVELCODE='HRMS'", new { id }, tx) == 0) throw new ApiException("Menu not found.", 404);
+            await c.ExecuteAsync("DELETE interface.accessright WHERE optionid=@id", new { id }, tx);
+            if (await c.ExecuteAsync("DELETE interface.interface WHERE OPTIONID=@id AND LEVELCODE='HRMS'", new { id }, tx) == 0) throw new ApiException("Menu not found.", 404);
             return new { Id = id };
         }));
 
@@ -229,7 +229,7 @@ ORDER BY CASE WHEN i.LEVELCODE = 'HRMS' THEN 0 ELSE 1 END, i.SEQUENCE", new { id
             var rows = (await c.QueryAsync<ApprovalRow>(@"
 SELECT l.Id AS Id, l.EmpCode, e.Empname AS Name, l.LeaveType, l.FromDate, l.ToDate, l.NoofLeavedays AS Days, l.Applieddate AS Applied, l.Rejoiningdate AS Rejoining,
        l.Transno AS TransNo, 'Pending' AS Status, l.Userid AS HeldBy, CAST(ISNULL(l.Userlevel,0) AS int) AS FromLevel,
-       (SELECT TOP 1 ISNULL(NULLIF(u.name,''), u.username) FROM HRMSINTER.interface.Userdef u WHERE u.userid =
+       (SELECT TOP 1 ISNULL(NULLIF(u.name,''), u.username) FROM interface.Userdef u WHERE u.userid =
             (SELECT TOP 1 t.Userid FROM inter01.UserwiseTransaction t WHERE t.TransNo = l.Transno AND t.Userid <> l.Userid ORDER BY t.id DESC)) AS FromUser,
        (SELECT TOP 1 CAST(t.Descr AS nvarchar(max)) FROM inter01.UserwiseTransaction t WHERE t.TransNo = l.Transno AND DATALENGTH(t.Descr) > 0 ORDER BY t.id DESC) AS Note
 FROM inter01.EMPLOYEELEAVEDETAILS l JOIN inter01.EmployeeMaster e ON e.EmpCode = l.EmpCode
@@ -266,7 +266,7 @@ ORDER BY l.Applieddate, l.FromDate", new { me = Caller(ctx).UserId })).ToList();
                 var push = level >= docLevel ? [] : await Workflow.Approvers(c, null, level, me.UserId, emp);
                 var back = (await c.QueryAsync<Approver>(@"
 SELECT t.Userid AS Id, ISNULL(NULLIF(MAX(u.name),''), MAX(u.username)) AS Name, MAX(r.rolename) AS RoleName, CAST(MAX(t.Auth) AS int) AS Level
-FROM inter01.UserwiseTransaction t JOIN HRMSINTER.interface.Userdef u ON u.userid = t.Userid LEFT JOIN HRMSINTER.interface.Roledef r ON r.roleid = u.roleid
+FROM inter01.UserwiseTransaction t JOIN interface.Userdef u ON u.userid = t.Userid LEFT JOIN interface.Roledef r ON r.roleid = u.roleid
 WHERE t.TransNo = @transNo AND t.Userid <> @me AND t.Userid <> @emp GROUP BY t.Userid ORDER BY MAX(t.Auth)", new { transNo, me = me.UserId, emp })).ToList();
                 return Results.Ok(new { final = level >= docLevel, level, docLevel, push, back });
             }
@@ -300,7 +300,7 @@ WHERE t.TransNo = @transNo AND t.Userid <> @me AND t.Userid <> @emp GROUP BY t.U
             if (string.IsNullOrWhiteSpace(x.Note)) throw new ApiException("Write a note for the person you are sending this back to.");
             var back = await c.QueryFirstOrDefaultAsync<Approver>(@"
 SELECT t.Userid AS Id, ISNULL(NULLIF(MAX(u.name),''), MAX(u.username)) AS Name, '' AS RoleName, CAST(MAX(t.Auth) AS int) AS Level
-FROM inter01.UserwiseTransaction t JOIN HRMSINTER.interface.Userdef u ON u.userid = t.Userid
+FROM inter01.UserwiseTransaction t JOIN interface.Userdef u ON u.userid = t.Userid
 WHERE t.TransNo = @transNo AND t.Userid = @to AND t.Userid <> @me AND t.Userid <> @emp GROUP BY t.Userid", new { transNo, to = x.To, me = me.UserId, emp }, tx)
                 ?? throw new ApiException("Choose someone who handled this request earlier.");
             await Workflow.Push(c, tx, id, transNo, back, "Sent back by " + me.FullName + ": " + x.Note.Trim());

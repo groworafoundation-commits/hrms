@@ -69,7 +69,7 @@ public class LoginTests(ApiFixture f)
         await f.CreateUser(c, "TSTOFF", "HRM-EMP", "self", null);
         for (var i = 0; i < 3; i++) await TryLogin("TSTOFF", "wrong-pass-1");
         Assert.Equal(HttpStatusCode.OK, (await TryLogin("TSTOFF", ApiFixture.Password)).StatusCode);
-        Assert.Equal(0, await c.ExecuteScalarAsync<int>("SELECT FailedLogins FROM HRMSINTER.interface.Userdef WHERE userid = 'TSTOFF'"));
+        Assert.Equal(0, await c.ExecuteScalarAsync<int>("SELECT FailedLogins FROM interface.Userdef WHERE userid = 'TSTOFF'"));
     }
 
     [Fact]
@@ -82,7 +82,7 @@ public class LoginTests(ApiFixture f)
         Assert.Equal(HttpStatusCode.OK, created.Status);
 
         await using (var c = f.Open())
-            Assert.Equal("hash", await c.ExecuteScalarAsync<string>("SELECT CASE WHEN password IS NULL AND PasswordHash LIKE 'PBKDF2%' THEN 'hash' ELSE 'plain' END FROM HRMSINTER.interface.Userdef WHERE userid = 'TSTMUST'"));
+            Assert.Equal("hash", await c.ExecuteScalarAsync<string>("SELECT CASE WHEN password IS NULL AND PasswordHash LIKE 'PBKDF2%' THEN 'hash' ELSE 'plain' END FROM interface.Userdef WHERE userid = 'TSTMUST'"));
 
         var s = await f.LoginAs("TSTMUST", "Temp1234");
         Assert.True(s.User.GetProperty("mustChange").GetBoolean());
@@ -106,7 +106,7 @@ public class LoginTests(ApiFixture f)
         await using var c = f.Open();
         await f.CreateUser(c, "TSTPLAIN", "HRM-EMP", "self", null, "Legacy1234", plainOnly: true);
         Assert.Equal(HttpStatusCode.OK, (await TryLogin("TSTPLAIN", "Legacy1234")).StatusCode);
-        var row = await c.QuerySingleAsync("SELECT password AS Plain, PasswordHash AS Hash FROM HRMSINTER.interface.Userdef WHERE userid = 'TSTPLAIN'");
+        var row = await c.QuerySingleAsync("SELECT password AS Plain, PasswordHash AS Hash FROM interface.Userdef WHERE userid = 'TSTPLAIN'");
         Assert.Null((string?)row.Plain);
         Assert.StartsWith("PBKDF2$", (string)row.Hash);
         Assert.Equal(HttpStatusCode.OK, (await TryLogin("TSTPLAIN", "Legacy1234")).StatusCode);                  // and it still works afterwards
@@ -116,7 +116,7 @@ public class LoginTests(ApiFixture f)
     public async Task No_plain_text_passwords_remain_in_the_user_table()
     {
         await using var c = f.Open();
-        Assert.Equal(0, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM HRMSINTER.interface.Userdef WHERE userid NOT LIKE 'TST%' AND password IS NOT NULL AND LEN(password) > 0"));
+        Assert.Equal(0, await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM interface.Userdef WHERE userid NOT LIKE 'TST%' AND password IS NOT NULL AND LEN(password) > 0"));
     }
 
     [Fact]

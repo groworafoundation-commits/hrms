@@ -43,16 +43,16 @@ BEGIN
 END;
 
 -- menu and rights (HRMSINTER)
-IF NOT EXISTS (SELECT 1 FROM HRMSINTER.interface.interface WHERE OPTIONID = 'H208')
-    INSERT HRMSINTER.interface.interface (OPTIONID, OPTIONNAME, ACTIVESTAT, SEQUENCE, LEVELCODE, VISIBLE, PRGNAME, SUBMENU, Appid, AuthLevel, PICTURE1, ReportPage, htmleditor, paytermspage, bizapirequired, optimize, sendmail)
+IF NOT EXISTS (SELECT 1 FROM interface.interface WHERE OPTIONID = 'H208')
+    INSERT interface.interface (OPTIONID, OPTIONNAME, ACTIVESTAT, SEQUENCE, LEVELCODE, VISIBLE, PRGNAME, SUBMENU, Appid, AuthLevel, PICTURE1, ReportPage, htmleditor, paytermspage, bizapirequired, optimize, sendmail)
     VALUES ('H208', 'Attendance Devices', '1', 27, 'HRMS', '1', 'admin/attendance/devices', '0', 'HRMS', 0, 'laptop', 0, 0, '', 0, 0, 0);
 
 DECLARE @r TABLE (role nvarchar(16), opt nvarchar(16), v bit, a bit, m bit, d bit, p bit, lvl int);
 INSERT @r VALUES ('HRM-MGR','H208',1,1,1,1,0,10), ('HRM-ADM','H208',1,1,1,1,0,9);
-INSERT HRMSINTER.interface.accessright (roleid, optionid, addd, modifyy, delete1, access, [level], Prints, SinglePush)
+INSERT interface.accessright (roleid, optionid, addd, modifyy, delete1, access, [level], Prints, SinglePush)
 SELECT role, opt, a, m, d, v, lvl, p, 0 FROM @r x
-WHERE NOT EXISTS (SELECT 1 FROM HRMSINTER.interface.accessright ar WHERE ar.roleid = x.role AND ar.optionid = x.opt);
+WHERE NOT EXISTS (SELECT 1 FROM interface.accessright ar WHERE ar.roleid = x.role AND ar.optionid = x.opt);
 
 SELECT 'tables' AS what, COUNT(*) AS n FROM sys.tables WHERE schema_id = SCHEMA_ID('hrms') AND name LIKE 'AttDevice%'
-UNION ALL SELECT 'menu', COUNT(*) FROM HRMSINTER.interface.interface WHERE OPTIONID = 'H208'
-UNION ALL SELECT 'rights', COUNT(*) FROM HRMSINTER.interface.accessright WHERE optionid = 'H208';
+UNION ALL SELECT 'menu', COUNT(*) FROM interface.interface WHERE OPTIONID = 'H208'
+UNION ALL SELECT 'rights', COUNT(*) FROM interface.accessright WHERE optionid = 'H208';

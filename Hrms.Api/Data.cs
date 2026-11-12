@@ -245,7 +245,7 @@ WITH emp AS (SELECT * FROM #emp)";
 
     const string LeaveSelect = @"
 SELECT l.Id AS Id, l.Rejoiningdate AS Rejoining, CAST(ISNULL(l.LeaveSalWithoutLeave,0) AS bit) AS SalaryWithoutLeave, l.EmpCode, e.Name, l.LeaveType, l.FromDate, l.ToDate, l.NoofLeavedays AS Days, l.Applieddate AS Applied, l.Transno AS TransNo, l.Userid AS HeldBy,
-       (SELECT TOP 1 ISNULL(NULLIF(u.name,''), u.username) FROM HRMSINTER.interface.Userdef u WHERE u.userid = l.Userid) AS HeldByName,
+       (SELECT TOP 1 ISNULL(NULLIF(u.name,''), u.username) FROM interface.Userdef u WHERE u.userid = l.Userid) AS HeldByName,
        CASE WHEN l.Userlevel >= l.documentlevel THEN 'Approved' ELSE 'Pending' END AS Status
 FROM inter01.EMPLOYEELEAVEDETAILS l JOIN emp e ON e.EmpCode = l.EmpCode
 WHERE ISNULL(l.Deleteflag,0)=0";

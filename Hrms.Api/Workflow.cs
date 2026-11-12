@@ -19,9 +19,9 @@ public static class Workflow
     public static async Task<List<Approver>> Approvers(SqlConnection c, SqlTransaction? tx, int aboveLevel, params string[] exclude) =>
         (await c.QueryAsync<Approver>(@"
 SELECT u.userid AS Id, ISNULL(NULLIF(u.name,''), u.username) AS Name, r.rolename AS RoleName, CAST(a.[level] AS int) AS Level
-FROM HRMSINTER.interface.Userdef u
-JOIN HRMSINTER.interface.Roledef r ON r.roleid = u.roleid
-JOIN HRMSINTER.interface.accessright a ON a.roleid = u.roleid AND a.optionid = @opt AND CAST(a.access AS int) = 1
+FROM interface.Userdef u
+JOIN interface.Roledef r ON r.roleid = u.roleid
+JOIN interface.accessright a ON a.roleid = u.roleid AND a.optionid = @opt AND CAST(a.access AS int) = 1
 WHERE ISNULL(u.[disable],0) = 0 AND CAST(a.[level] AS int) > @level AND u.userid NOT IN @exclude
 ORDER BY a.[level], Name", new { opt = ApprovalOption, level = aboveLevel, exclude = exclude.Length == 0 ? new[] { "" } : exclude }, tx)).ToList();
 

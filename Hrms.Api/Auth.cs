@@ -4,7 +4,7 @@ using Dapper;
 
 namespace Hrms.Api;
 
-// Login and access. Users, roles and rights come from the ERP (HRMSINTER.interface.Userdef / SELECTMENUOPTION), so an
+// Login and access. Users, roles and rights come from the ERP (interface.Userdef / SELECTMENUOPTION), so an
 // account that works in the ERP works here with the same menu rights. Which employees a user may see comes from
 // LaunchMain inter01.accessuser, exactly as the ERP HR screens filter them.
 
@@ -195,7 +195,7 @@ public static class AuthEndpoints
             var u = await c.QueryFirstOrDefaultAsync<UserRow>(@"
 SELECT TOP 1 userid AS UserId, username AS UserName, name AS Name, password AS Password, PasswordHash, ISNULL(FailedLogins,0) AS FailedLogins, LockedUntil, CAST(ISNULL(MustChange,0) AS bit) AS MustChange,
        roleid AS RoleId, CompanyCodes, financialyearcode AS FinancialYearCode, Defaultcompany AS DefaultCompany
-FROM HRMSINTER.interface.Userdef WHERE (username = @login OR userid = @login) AND ISNULL([disable],0) = 0", new { login });
+FROM interface.Userdef WHERE (username = @login OR userid = @login) AND ISNULL([disable],0) = 0", new { login });
 
             if (u?.LockedUntil is { } until && until > DateTime.Now)
                 return Results.Json(new { error = $"Too many failed attempts. Try again in {Math.Max(1, (int)Math.Ceiling((until - DateTime.Now).TotalMinutes))} minutes, or ask an administrator to unlock you." }, statusCode: 423);
@@ -207,7 +207,7 @@ FROM HRMSINTER.interface.Userdef WHERE (username = @login OR userid = @login) AN
                 {
                     var fails = u.FailedLogins + 1;
                     var locks = fails >= Passwords.MaxFailed;
-                    await c.ExecuteAsync("UPDATE HRMSINTER.interface.Userdef SET FailedLogins=@fails, LockedUntil=@until WHERE userid=@id",
+                    await c.ExecuteAsync("UPDATE interface.Userdef SET FailedLogins=@fails, LockedUntil=@until WHERE userid=@id",
                         new { id = u.UserId, fails = locks ? 0 : fails, until = locks ? DateTime.Now.AddMinutes(Passwords.LockMinutes) : (DateTime?)null });
                     if (locks) return Results.Json(new { error = $"Too many failed attempts. This account is locked for {Passwords.LockMinutes} minutes." }, statusCode: 423);
                 }
@@ -215,33 +215,33 @@ FROM HRMSINTER.interface.Userdef WHERE (username = @login OR userid = @login) AN
             }
             // success: clear the counters, and move a not-yet-migrated plain password to a hash
             await c.ExecuteAsync(u.PasswordHash is null
-                ? "UPDATE HRMSINTER.interface.Userdef SET FailedLogins=0, LockedUntil=NULL, LastLogin=GETDATE(), PasswordHash=@hash, password=NULL, PasswordChangedAt=GETDATE() WHERE userid=@id"
-                : "UPDATE HRMSINTER.interface.Userdef SET FailedLogins=0, LockedUntil=NULL, LastLogin=GETDATE() WHERE userid=@id",
+                ? "UPDATE interface.Userdef SET FailedLogins=0, LockedUntil=NULL, LastLogin=GETDATE(), PasswordHash=@hash, password=NULL, PasswordChangedAt=GETDATE() WHERE userid=@id"
+                : "UPDATE interface.Userdef SET FailedLogins=0, LockedUntil=NULL, LastLogin=GETDATE() WHERE userid=@id",
                 new { id = u.UserId, hash = u.PasswordHash is null ? Passwords.Hash(x.Password) : null });
 
             var rows = (await c.QueryAsync<RightRow>(@"
 SELECT r.optionid AS OptionId, CAST(r.access AS int) AS Access, CAST(ISNULL(r.addd,0) AS bit) AS Addd, CAST(ISNULL(r.modifyy,0) AS bit) AS Modifyy, CAST(ISNULL(r.delete1,0) AS bit) AS Delete1,
        CAST(ISNULL(r.Prints,0) AS bit) AS Prints, CAST(r.[level] AS varchar(10)) AS Level
-FROM HRMSINTER.interface.accessright r WHERE r.roleid = @role AND (r.optionid IN ('137','207','208','209','210','1012','1765','162','164') OR r.optionid LIKE 'H%')", new { role = u.RoleId })).ToList();
+FROM interface.accessright r WHERE r.roleid = @role AND (r.optionid IN ('137','207','208','209','210','1012','1765','162','164') OR r.optionid LIKE 'H%')", new { role = u.RoleId })).ToList();
 
             var rights = rows.ToDictionary(r => r.OptionId.Trim(), r => new OptionRight(r.OptionId.Trim(), r.Access == "1", r.Addd, r.Modifyy, r.Delete1, r.Prints, int.TryParse(r.Level, out var l) ? l : 0));
 
             // Any report option the role holds opens the Reports hub (the ERP keeps each payroll report as its own option).
             var reportAccess = await c.ExecuteScalarAsync<int>(@"
-SELECT COUNT(*) FROM HRMSINTER.interface.accessright r JOIN HRMSINTER.interface.interface i ON i.OPTIONID = r.optionid
+SELECT COUNT(*) FROM interface.accessright r JOIN interface.interface i ON i.OPTIONID = r.optionid
 WHERE r.roleid = @role AND CAST(r.access AS int) = 1 AND i.LEVELCODE = '603'", new { role = u.RoleId });
             if (reportAccess > 0 && !rights.ContainsKey("162")) rights["162"] = new OptionRight("162", true, false, false, false, true, 10);
 
             var menu = (await c.QueryAsync<MenuItem>(@"
 SELECT i.OPTIONID AS Id, i.OPTIONNAME AS Name, i.PRGNAME AS Route, ISNULL(i.PICTURE1,'grid') AS Icon, ISNULL(i.SEQUENCE,0) AS Sequence
-FROM HRMSINTER.interface.interface i JOIN HRMSINTER.interface.accessright r ON r.optionid = i.OPTIONID
+FROM interface.interface i JOIN interface.accessright r ON r.optionid = i.OPTIONID
 WHERE r.roleid = @role AND CAST(r.access AS int) = 1 AND i.LEVELCODE = 'HRMS' AND ISNULL(i.ACTIVESTAT,'1') = '1' ORDER BY i.SEQUENCE", new { role = u.RoleId })).ToList();
             var employeeCode = await c.ExecuteScalarAsync<string?>("SELECT TOP 1 EmpCode FROM inter01.EmployeeMaster WHERE EmpCode = @id", new { id = u.UserId });
             // The "My ..." pages are about the signed-in person's own employee record; a login without one has nothing to show there.
             if (employeeCode is null) menu = menu.Where(m => !m.Route.StartsWith("my", StringComparison.OrdinalIgnoreCase)).ToList();
 
             var scope = await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM inter01.accessuser WHERE userid = @id", new { id = u.UserId });
-            var roleName = await c.ExecuteScalarAsync<string>("SELECT TOP 1 rolename FROM HRMSINTER.interface.Roledef WHERE roleid = @role", new { role = u.RoleId });
+            var roleName = await c.ExecuteScalarAsync<string>("SELECT TOP 1 rolename FROM interface.Roledef WHERE roleid = @role", new { role = u.RoleId });
             var companies = (u.CompanyCodes ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
 
             const bool isAdmin = false; // every role is held to its accessright rows
@@ -257,9 +257,9 @@ WHERE r.roleid = @role AND CAST(r.access AS int) = 1 AND i.LEVELCODE = 'HRMS' AN
             if (Passwords.Policy(x.NewPassword) is { } problem) return Results.BadRequest(new { error = problem });
             if (x.NewPassword == x.Current) return Results.BadRequest(new { error = "Choose a password you have not used just now." });
             await using var c = db.OpenWrite();
-            var row = await c.QueryFirstOrDefaultAsync<UserRow>("SELECT PasswordHash, password AS Password FROM HRMSINTER.interface.Userdef WHERE userid=@id", new { id = me.UserId });
+            var row = await c.QueryFirstOrDefaultAsync<UserRow>("SELECT PasswordHash, password AS Password FROM interface.Userdef WHERE userid=@id", new { id = me.UserId });
             if (row is null || !Passwords.VerifyAny(x.Current, row.PasswordHash, row.Password, true)) return Results.Json(new { error = "Your current password is not correct." }, statusCode: 400);
-            await c.ExecuteAsync("UPDATE HRMSINTER.interface.Userdef SET PasswordHash=@hash, password=NULL, MustChange=0, FailedLogins=0, LockedUntil=NULL, PasswordChangedAt=GETDATE() WHERE userid=@id", new { id = me.UserId, hash = Passwords.Hash(x.NewPassword) });
+            await c.ExecuteAsync("UPDATE interface.Userdef SET PasswordHash=@hash, password=NULL, MustChange=0, FailedLogins=0, LockedUntil=NULL, PasswordChangedAt=GETDATE() WHERE userid=@id", new { id = me.UserId, hash = Passwords.Hash(x.NewPassword) });
             var h = ctx.Request.Headers.Authorization.ToString();
             var token = h[7..].Trim();
             store.Replace(token, me with { MustChange = false });

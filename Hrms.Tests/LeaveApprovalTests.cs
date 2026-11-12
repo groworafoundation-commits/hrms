@@ -153,7 +153,7 @@ public class LeaveApprovalTests(ApiFixture f)
     {
         var emp = await f.LoginAs(f.Employee); var adm = await f.LoginAs(ApiFixture.Admin); var mgr = await f.LoginAs(ApiFixture.Manager);
         await using var c = f.Open();
-        await c.ExecuteAsync("UPDATE HRMSINTER.interface.Userdef SET emailid = @e WHERE userid = @u", new { e = ApiFixture.AdminEmail, u = ApiFixture.Admin });
+        await c.ExecuteAsync("UPDATE interface.Userdef SET emailid = @e WHERE userid = @u", new { e = ApiFixture.AdminEmail, u = ApiFixture.Admin });
         var (_, leave, _) = await Request(emp, ApiFixture.Admin, 7);
 
         var first = (await adm.Get("/api/notifications")).Body;
