@@ -1,0 +1,71 @@
+@page "/my/ask"
+@inject PortalClient Portal
+@inject NavigationManager Nav
+
+<PageTitle>Ask HR</PageTitle>
+
+<section class="greeting"><div><h1>Ask HR</h1><p>Quick answers about your leave, pay and attendance.</p></div></section>
+
+<section class="ask">
+    <div class="ask-thread">
+        @if (thread.Count == 0)
+        {
+            <div class="ask-bubble bot"><b>Hi! Ask me something, or tap a question below.</b></div>
+        }
+        @foreach (var m in thread)
+        {
+            if (m.Mine)
+            {
+                <div class="ask-bubble me">@m.Text</div>
+            }
+            else
+            {
+                <div class="ask-bubble bot">
+                    <b>@m.Answer!.Title</b>
+                    <p>@m.Answer.Text</p>
+                    @if (m.Answer.Lines.Count > 0) { <ul>@foreach (var l in m.Answer.Lines) { <li>@l</li> } </ul> }
+                    @if (!string.IsNullOrEmpty(m.Answer.Link)) { <a class="btn ghost sm" href="@m.Answer.Link">Open</a> }
+                </div>
+            }
+        }
+        @if (busy) { <div class="ask-bubble bot"><span class="spinner sm"></span></div> }
+    </div>
+
+    <div class="ask-chips">
+        @foreach (var s in suggestions) { <button type="button" class="ask-chip" @onclick="() => Send(s)" disabled="@busy">@s</button> }
+    </div>
+
+    <form class="ask-form" @onsubmit="() => Send(draft)" @onsubmit:preventDefault="true">
+        <input type="text" maxlength="300" placeholder="Type a question, e.g. my leave balance" @bind="draft" @bind:event="oninput" autocomplete="off" />
+        <button type="submit" class="btn primary" disabled="@(busy || string.IsNullOrWhiteSpace(draft))"><Icon Name="arrow-right" Size="18" /></button>
+    </form>
+    <p class="muted note">Answers come from your own records. Nothing is changed by asking.</p>
+</section>
+
+@code {
+    record Msg(bool Mine, string Text, AskAnswer? Answer);
+
+    readonly List<Msg> thread = [];
+    List<string> suggestions = [];
+    string draft = "";
+    bool busy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { suggestions = await Portal.AskSuggestions() ?? []; } catch { suggestions = []; }
+    }
+
+    async Task Send(string text)
+    {
+        text = (text ?? "").Trim();
+        if (text.Length == 0 || busy) return;
+        thread.Add(new Msg(true, text, null));
+        draft = "";
+        busy = true;
+        AskAnswer? a = null;
+        try { a = await Portal.Ask(text); } catch { }
+        busy = false;
+        thread.Add(new Msg(false, "", a ?? new AskAnswer("error", "Sorry", "I could not reach the HRMS service. Please try again.", [], null, [])));
+        if (a is not null && a.Suggestions.Count > 0) suggestions = a.Suggestions;
+    }
+}

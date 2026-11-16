@@ -53,6 +53,42 @@ ORDER BY a.[level], Name", new { opt = ApprovalOption, level = aboveLevel, exclu
         string.IsNullOrEmpty(transNo) ? Task.CompletedTask
             : c.ExecuteAsync("DELETE inter01.EmpAccuralPayment WHERE LTransno = @transNo AND ISNULL(Amount,0) = 0", new { transNo }, tx);
 
+    // Facts that help the person deciding, worked out from the data alone: notice given, what the balance will be, who else is away, how much
+    // has been taken. Advice only; the decision stays with the approver.
+    public static async Task<List<string>> Facts(SqlConnection c, ApprovalRow l)
+    {
+        var facts = new List<string>();
+        try
+        {
+            var notice = l.Applied is null ? (int?)null : (int)(l.FromDate.Date - l.Applied.Value.Date).TotalDays;
+            if (notice is < 0) facts.Add($"Requested after the leave started ({-notice} day{(notice == -1 ? "" : "s")} late)");
+            else if (notice is >= 0 and <= 1) facts.Add(notice == 0 ? "Starts the same day it was requested" : "Only 1 day of notice");
+            else if (notice is not null) facts.Add($"{notice} days of notice");
+
+            var bal = (await LeaveBalances.For(c, l.EmpCode, true)).FirstOrDefault();
+            if (bal is { HasPayroll: true })
+            {
+                if (l.LeaveType == "ALVESAL")
+                {
+                    // this request is already counted in Pending, so the balance after approval is what is left once it is taken
+                    var after = bal.Available;
+                    facts.Add(after < 0 ? $"Annual leave would go {-after:0.#} day{(-after == 1 ? "" : "s")} below the balance" : $"Annual leave balance after this request: {after:0.#} days");
+                }
+                facts.Add($"Taken so far in {bal.Year}: {bal.TakenThisYear:0.#} days");
+            }
+
+            var others = (await c.QueryAsync<string>(@"
+SELECT ISNULL(e.Empname, l.EmpCode) FROM inter01.EMPLOYEELEAVEDETAILS l LEFT JOIN inter01.EmployeeMaster e ON e.EmpCode = l.EmpCode
+WHERE ISNULL(l.Deleteflag,0) = 0 AND l.EmpCode <> @emp AND l.FromDate <= @to AND l.ToDate >= @from ORDER BY e.Empname",
+                new { emp = l.EmpCode, from = l.FromDate.Date, to = l.ToDate.Date })).ToList();
+            var t = System.Globalization.CultureInfo.InvariantCulture.TextInfo;
+            facts.Add(others.Count == 0 ? "Nobody else is on leave on these dates"
+                : $"{others.Count} other{(others.Count == 1 ? "" : "s")} on leave on these dates: " + string.Join(", ", others.Take(3).Select(n => t.ToTitleCase(n.ToLowerInvariant()))) + (others.Count > 3 ? $" and {others.Count - 3} more" : ""));
+        }
+        catch { /* facts are a convenience; a failure here must never block an approval */ }
+        return facts;
+    }
+
     public static string Summary(LeaveInfo l) =>
         $"{System.Globalization.CultureInfo.InvariantCulture.TextInfo.ToTitleCase(l.Name.ToLowerInvariant())}: {LeaveTypes.Name(l.LeaveType)}, {l.FromDate:d MMM} to {l.ToDate:d MMM yyyy} ({l.Days:0.#} days)";
 }

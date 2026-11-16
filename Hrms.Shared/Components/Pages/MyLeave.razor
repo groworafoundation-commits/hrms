@@ -1,4 +1,5 @@
 @page "/my/leave"
+@implements IDisposable
 @inject PortalClient Portal
 @inject AuthState Auth
 
@@ -12,7 +13,7 @@
     </div>
 </section>
 
-<State Loading="@loading" Error="@error" OnRetry="Load">
+<State Loading="@loading" Error="@error" OnRetry="@(() => Load())">
     @if (me is not null)
     {
         @if (balance is { HasPayroll: true })
@@ -32,6 +33,20 @@
             }
             <div class="typecard static"><small>Waiting for approval</small><strong>@me.Pending</strong><span>requests</span></div>
         </div>
+
+        @if (decisions.Count > 0)
+        {
+            <section class="card decisions">
+                <h3>Latest updates on your requests</h3>
+                <ul>
+                    @foreach (var n in decisions)
+                    {
+                        var o = LiveUpdates.Outcome(n)!.Value;
+                        <li><em class="badge @o.Css">@o.Label</em> @if (n.ReadAt is null) { <i class="new-pill">NEW</i> } <b>@n.Title</b><span>@n.Body</span><small>@n.CreatedAt.ToString("d MMM HH:mm")</small></li>
+                    }
+                </ul>
+            </section>
+        }
 
         <section class="card">
             <table class="tbl rows">
@@ -71,21 +86,28 @@
     MySummary? me;
     LeaveBalance? balance;
     List<LeaveRow> rows = [];
+    List<NotificationItem> decisions = [];
     LeaveRow? cancelling;
     bool loading = true, showForm, busy;
     string? error, cancelError, toast;
 
-    protected override Task OnInitializedAsync() => Load();
+    protected override Task OnInitializedAsync() { LiveUpdates.Arrived += OnArrived; return Load(); }
+
+    // an approval, rejection or hand-over of this person's request: reload quietly so the status changes on screen without a refresh
+    void OnArrived(NotificationItem n) { if (n.Kind == "leave") _ = InvokeAsync(async () => { await Load(silent: true); StateHasChanged(); }); }
+    public void Dispose() => LiveUpdates.Arrived -= OnArrived;
 
     async Task Toast(string message) { toast = message; StateHasChanged(); await Task.Delay(3500); toast = null; StateHasChanged(); }
 
-    async Task Load()
+    async Task Load(bool silent = false)
     {
-        loading = true; error = null;
+        if (!silent) loading = true;
+        error = null;
         try
         {
             me = await Portal.Me();
             try { balance = await Portal.MyBalance(); } catch { balance = null; }
+            try { decisions = (await Portal.Notifications())?.Items.Where(n => LiveUpdates.Outcome(n) is not null).Take(5).ToList() ?? []; } catch { decisions = []; }
             rows = (await Portal.MyLeave(DateTime.Today.AddYears(-2), DateTime.Today.AddYears(1)) ?? []).OrderByDescending(l => l.FromDate).ToList();
         }
         catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }

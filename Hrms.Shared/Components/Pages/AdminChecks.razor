@@ -1,0 +1,93 @@
+@page "/admin/checks"
+@inject PortalClient Portal
+
+<PageTitle>Payroll and attendance checks</PageTitle>
+
+<section class="greeting">
+    <div><h1>Payroll &amp; attendance checks</h1><p>Things worth a second look. These are prompts to check, not mistakes for certain.</p></div>
+    <div class="page-actions"><button type="button" class="btn ghost" @onclick="() => showSettings = !showSettings">Settings</button><button type="button" class="btn primary" @onclick="Load" disabled="@loading">Run again</button></div>
+</section>
+
+@if (showSettings)
+{
+    <section class="card">
+        <div class="form-grid">
+            <label class="field"><span>Net pay change over (%)</span><input type="number" min="5" max="500" @bind="payChange" /></label>
+            <label class="field"><span>Late days at least</span><input type="number" min="1" max="31" @bind="late" /></label>
+            <label class="field"><span>Absent days at least</span><input type="number" min="1" max="31" @bind="absent" /></label>
+            <label class="field"><span>Missing punches at least</span><input type="number" min="1" max="31" @bind="missing" /></label>
+        </div>
+        <p class="muted note">Lower numbers find more. Press <b>Run again</b> after changing them.</p>
+    </section>
+}
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    @if (result is not null)
+    {
+        <section class="kpis">
+            <article class="card kpi"><div class="kpi-body"><small>Payroll checked</small><strong>@(result.PayrollMonth is null ? "-" : Fmt.MonthLabel(result.PayrollMonth))</strong><span class="kpi-note">@(result.PreviousMonth is null ? "no earlier month" : "against " + Fmt.MonthLabel(result.PreviousMonth))</span></div></article>
+            <article class="card kpi"><div class="kpi-body"><small>High</small><strong>@Count("High")</strong><span class="kpi-note">look at first</span></div></article>
+            <article class="card kpi"><div class="kpi-body"><small>Medium</small><strong>@Count("Medium")</strong><span class="kpi-note">worth a look</span></div></article>
+            <article class="card kpi"><div class="kpi-body"><small>Low</small><strong>@Count("Low")</strong><span class="kpi-note">of @result.Employees employees</span></div></article>
+        </section>
+
+        @if (result.Salary is { } s)
+        {
+            <section class="card">
+                <h3>Salary processing for @Fmt.MonthLabel(s.Month)</h3>
+                <p class="muted note">The ERP runs the calculation and the ledger posting. This is what its Salary Calculation screen would check first.@(s.LastProcessedMonth is null ? "" : " Last processed month: " + Fmt.MonthLabel(s.LastProcessedMonth) + ".")</p>
+                <ul class="plain">
+                    <li><b>@(s.Processed ? "Processed" : "Not processed yet")</b>@(s.Processed ? $" for {s.PaidEmployees} employees" : "")</li>
+                    <li><b>Ledger posting:</b> @(s.Posted is null ? "cannot be told from here, check in the ERP" : s.Posted == true ? "posted" : "not posted")</li>
+                    <li><b>Leave not approved:</b> @s.UnapprovedLeave</li>
+                    <li><b>Variable salary not approved:</b> @(s.UnapprovedVariable?.ToString() ?? "cannot be told from here")</li>
+                    <li><b>Variable salary not posted:</b> @(s.UnpostedVariable?.ToString() ?? "cannot be told from here")</li>
+                </ul>
+                <p>@(s.ReadyToProcess ? "Nothing is holding up processing. The accountant can run it in the ERP." : s.Processed ? "This month has already been processed." : "Clear the items under Salary processing below before the ERP run.")</p>
+            </section>
+        }
+
+        <nav class="subnav">
+            @foreach (var a in new[] { "All", "Payroll", "Attendance", "Salary processing" })
+            {
+                <button type="button" class="subnav-item @(area == a ? "active" : "")" @onclick="() => area = a">@a (@(a == "All" ? result.Findings.Count : result.Findings.Count(f => f.Area == a)))</button>
+            }
+        </nav>
+
+        <div class="inbox">
+            @foreach (var f in Shown)
+            {
+                <article class="inbox-card">
+                    <div class="who"><Avatar Name="@f.Name" Size="38" />
+                        <div class="grow"><strong>@f.Name</strong><small>@f.EmpCode | @f.Area</small></div>
+                        <span class="chip-kind sev-@f.Severity.ToLowerInvariant()">@f.Severity</span>
+                    </div>
+                    <div class="inbox-what"><b>@f.Check</b> <span>@f.Detail</span></div>
+                    <div class="inbox-actions"><a class="btn ghost" href="employees/@f.EmpCode">Open employee</a></div>
+                </article>
+            }
+            @if (!Shown.Any()) { <div class="card state empty"><h3>Nothing to flag</h3><p>No findings with the current settings.</p></div> }
+        </div>
+    }
+</State>
+
+@code {
+    CheckResult? result;
+    string area = "All";
+    int payChange = 20, late = 5, absent = 3, missing = 3;
+    bool loading = true, showSettings;
+    string? error;
+
+    IEnumerable<CheckFinding> Shown => result is null ? [] : result.Findings.Where(f => area == "All" || f.Area == area);
+    int Count(string sev) => result?.Findings.Count(f => f.Severity == sev) ?? 0;
+
+    protected override Task OnInitializedAsync() => Load();
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try { result = await Portal.Checks(payChange, late, absent, missing); }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+}

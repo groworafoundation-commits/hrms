@@ -161,12 +161,19 @@ public static partial class Writes
         });
 
         // ----- employee master -----
-        app.MapPost("/api/employees", async (Db db, EmployeeInput e, bool dryRun = false) => await Run(db, dryRun, async (c, tx) =>
+        app.MapPost("/api/employees", async (Db db, HrmsSession s, EmployeeInput e, bool dryRun = false) => await Run(db, dryRun, async (c, tx) =>
         {
             Validate(e);
             if (await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM inter01.EmployeeMaster WHERE EmpCode=@EmpCode", new { e.EmpCode }, tx) > 0)
                 throw new ApiException("Employee code already exists. Choose another code.", 409);
+            // Everything is filtered by the user's AccessUser list, so a new employee is invisible ("Employee not found") until it is added. Give it to
+            // the person creating it and to every user who can already see all employees, the same as the ERP's HR screens would.
+            var everyone = await c.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM inter01.EmployeeMaster", transaction: tx);
             await SaveMaster(c, tx, e);
+            await c.ExecuteAsync(@"INSERT inter01.AccessUser (UserId, AccessUser)
+                SELECT u.UserId, @EmpCode FROM (SELECT UserId FROM inter01.AccessUser GROUP BY UserId HAVING COUNT(*) >= @everyone
+                                                UNION SELECT @me) u
+                WHERE NOT EXISTS (SELECT 1 FROM inter01.AccessUser a WHERE a.UserId = u.UserId AND a.AccessUser = @EmpCode)", new { e.EmpCode, everyone, me = s.UserId }, tx);
             return new { e.EmpCode };
         }));
 

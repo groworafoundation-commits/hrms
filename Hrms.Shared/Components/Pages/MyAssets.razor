@@ -1,0 +1,88 @@
+@page "/my/assets"
+@inject PortalClient Portal
+@inject AuthState Auth
+
+<PageTitle>My assets</PageTitle>
+
+<section class="greeting"><div><h1>My assets</h1><p>Equipment the company has issued to you. Please look after it and return it when you leave.</p></div></section>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    @if (incoming.Count > 0)
+    {
+        <h4>Waiting for you to accept</h4>
+        <div class="inbox">
+            @foreach (var w in incoming)
+            {
+                <article class="inbox-card">
+                    <div class="who"><span class="asset-icon"><Icon Name="laptop" Size="22" /></span><div class="grow"><strong>@w.AssetName</strong><small>@w.AssetCode | Serial @w.SerialNo | @w.DocNo</small></div><span class="chip-kind st-warn">Transfer to you</span></div>
+                    <div class="inbox-what"><b>From @Fmt.Title(w.EmpName ?? w.EmpCode)</b><span>@Fmt.Date(w.Date)@(string.IsNullOrEmpty(w.Condition) ? "" : " | " + w.Condition)</span></div>
+                    <div class="inbox-actions"><button type="button" class="btn primary" @onclick="() => AcceptTransfer(w)" disabled="@busy">Accept it</button></div>
+                </article>
+            }
+        </div>
+        <h4>My equipment</h4>
+    }
+    <div class="inbox">
+        @foreach (var a in rows)
+        {
+            <article class="inbox-card">
+                <div class="who">
+                    <span class="asset-icon"><Icon Name="@IconFor(a.Category)" Size="22" /></span>
+                    <div class="grow"><strong>@a.AssetName</strong><small>@a.AssetCode | @a.Category | Serial @a.SerialNo</small></div>
+                    <span class="chip-kind @StateClass(a.State)">@a.State</span>
+                </div>
+                <div class="inbox-what"><b>Issued @Fmt.Date(a.IssueDate)</b><span>@string.Join(" | ", new[] { string.IsNullOrEmpty(a.ConditionOut) ? null : "Condition: " + a.ConditionOut, a.DocNo }.Where(x => !string.IsNullOrEmpty(x)))</span></div>
+                @if (a.State == "Returned") { <p class="muted note">Returned on @Fmt.Date(a.ReturnDate)@(string.IsNullOrEmpty(a.ConditionIn) ? "" : ". Condition: " + a.ConditionIn).</p> }
+                @if (a.State == "With employee" && a.AcceptedAt is null)
+                {
+                    <div class="inbox-actions"><button type="button" class="btn primary" @onclick="() => Accept(a)" disabled="@busy">I received this</button></div>
+                }
+                else if (a.AcceptedAt is not null && a.State != "Returned") { <p class="muted note">You confirmed receiving it on @Fmt.Date(a.AcceptedAt).</p> }
+            </article>
+        }
+        @if (rows.Count == 0) { <div class="card state empty"><h3>Nothing issued to you</h3><p>When the company issues you a laptop, phone or SIM, it appears here.</p></div> }
+    </div>
+</State>
+@if (toast is not null) { <div class="toast">@toast</div> }
+
+@code {
+    List<CustodyRow> rows = [];
+    List<AssetWaiting> incoming = [];
+    bool loading = true, busy;
+    string? error, toast;
+
+    protected override Task OnInitializedAsync() => Load();
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try { rows = await Portal.MyAssets() ?? []; incoming = await Portal.MyIncomingAssets() ?? []; }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+
+    async Task Accept(CustodyRow a)
+    {
+        busy = true;
+        var r = await Portal.AcceptAsset(a.Id);
+        busy = false;
+        toast = r.Ok ? "Thanks, confirmed." : r.Error;
+        await Load();
+        StateHasChanged();
+        await Task.Delay(3000); toast = null; StateHasChanged();
+    }
+
+    async Task AcceptTransfer(AssetWaiting w)
+    {
+        busy = true;
+        var r = await Portal.AcceptTransferMine(w.Id);
+        busy = false;
+        toast = r.Ok ? "Accepted. It is now yours." : r.Error;
+        await Load();
+        StateHasChanged();
+        await Task.Delay(3000); toast = null; StateHasChanged();
+    }
+
+    internal static string IconFor(string category) => category switch { "Laptop" or "Desktop" or "Tablet" => "laptop", "Vehicle" => "briefcase", "Access card" => "shield", _ => "briefcase" };
+    internal static string StateClass(string state) => state switch { "With employee" => "st-ok", "Returned" => "st-info", "Rejected" => "st-bad", _ => "st-warn" };
+}

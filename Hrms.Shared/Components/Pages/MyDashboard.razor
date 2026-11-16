@@ -15,7 +15,22 @@
 <State Loading="@loading" Error="@error" OnRetry="Load">
     @if (me is not null)
     {
+        <section class="me-actions">
+            @if (Auth.HasMenu("H102")) { <a class="me-tile" href="my/leave"><span class="tone-violet"><Icon Name="calendar" Size="24" /></span><b>Request leave</b><small>Apply and follow approval</small></a> }
+            @if (Auth.HasMenu("H104")) { <a class="me-tile" href="my/payslips"><span class="tone-green"><Icon Name="wallet" Size="24" /></span><b>Payslips</b><small>View or save as PDF</small></a> }
+            @if (Auth.HasMenu("H106")) { <a class="me-tile" href="my/attendance"><span class="tone-blue"><Icon Name="clock" Size="24" /></span><b>Attendance</b><small>Punch and corrections</small></a> }
+            <a class="me-tile" href="my/ask"><span class="tone-violet"><Icon Name="bot" Size="24" /></span><b>Ask HR</b><small>Quick answers</small></a>
+            <a class="me-tile" href="my/profile"><span class="tone-orange"><Icon Name="user" Size="24" /></span><b>My profile</b><small>Your details</small></a>
+        </section>
+
         <section class="kpis">
+            @if (bal is not null)
+            {
+                <article class="card kpi">
+                    <span class="kpi-icon tone-violet"><Icon Name="medical" Size="26" /></span>
+                    <div class="kpi-body"><small>Leave available</small><strong>@bal.Available.ToString("0.#")</strong><span class="kpi-note link">days (@bal.Pending.ToString("0.#") pending)</span></div>
+                </article>
+            }
             <article class="card kpi">
                 <span class="kpi-icon tone-blue"><Icon Name="calendar" Size="26" /></span>
                 <div class="kpi-body"><small>Leave taken in @me.Year</small><strong>@me.Taken.Sum(t => t.Days).ToString("0.#")</strong><span class="kpi-note link">days approved</span></div>
@@ -23,10 +38,6 @@
             <article class="card kpi">
                 <span class="kpi-icon tone-orange"><Icon Name="clock" Size="26" /></span>
                 <div class="kpi-body"><small>Waiting for approval</small><strong>@me.Pending</strong><a class="kpi-note link" href="my/leave">View requests</a></div>
-            </article>
-            <article class="card kpi">
-                <span class="kpi-icon tone-violet"><Icon Name="medical" Size="26" /></span>
-                <div class="kpi-body"><small>Next leave</small><strong>@(next is null ? "None" : Fmt.Short(next.FromDate))</strong><span class="kpi-note link">@(next?.LeaveName ?? "Nothing planned")</span></div>
             </article>
             <article class="card kpi">
                 <span class="kpi-icon tone-green"><Icon Name="wallet" Size="26" /></span>
@@ -56,20 +67,12 @@
             </article>
         </section>
 
-        <section class="card quick">
-            <h3>Quick links</h3>
-            <div class="quick-grid q3">
-                @if (Auth.HasMenu("H106")) { <a class="quick-item" href="my/attendance"><span class="tone-green"><Icon Name="clock" Size="22" /></span>Punch in / out</a> }
-                @if (Auth.HasMenu("H102")) { <a class="quick-item" href="my/leave"><span class="tone-violet"><Icon Name="calendar" Size="22" /></span>Request leave</a> }
-                @if (Auth.HasMenu("H103")) { <a class="quick-item" href="my/calendar"><span class="tone-blue"><Icon Name="calendar-check" Size="22" /></span>My calendar</a> }
-                @if (Auth.HasMenu("H104")) { <a class="quick-item" href="my/payslips"><span class="tone-green"><Icon Name="wallet" Size="22" /></span>My payslips</a> }
-            </div>
-        </section>
     }
 </State>
 
 @code {
     MySummary? me;
+    LeaveBalance? bal;
     List<LeaveRow> leave = [];
     List<PayslipRow> pay = [];
     bool loading = true;
@@ -98,6 +101,7 @@
             me = await Portal.Me();
             leave = await Portal.MyLeave(new DateTime(DateTime.Today.Year, 1, 1), new DateTime(DateTime.Today.Year + 1, 12, 31)) ?? [];
             pay = Auth.HasMenu("H104") ? await Portal.MyPayslips() ?? [] : [];
+            try { bal = await Portal.MyBalance(); } catch { bal = null; }   // no balance until payroll has been processed for the employee
         }
         catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
         loading = false;

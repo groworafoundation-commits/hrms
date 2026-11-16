@@ -1,0 +1,36 @@
+<Modal Title="@(Approving ? "Approve" : "Reject")" OnClose="Close">
+    <div class="form">
+        <p>@Summary</p>
+        <label class="field full"><span>@(Approving ? "Note (optional)" : "Reason (required)")</span><input type="text" maxlength="300" @bind="note" /></label>
+        @if (error is not null) { <div class="form-error">@error</div> }
+        <div class="form-actions">
+            <button type="button" class="btn ghost" @onclick="Close" disabled="@busy">Cancel</button>
+            <button type="button" class="btn @(Approving ? "primary" : "danger")" @onclick="Submit" disabled="@busy">@(busy ? "Saving..." : Approving ? "Approve" : "Reject")</button>
+        </div>
+    </div>
+</Modal>
+
+@code {
+    [Parameter] public string Summary { get; set; } = "";
+    [Parameter] public bool Approving { get; set; } = true;
+    // What to call when confirmed: approve or reject with the note.
+    [Parameter, EditorRequired] public Func<string?, Task<WriteResult>> Action { get; set; } = default!;
+    [Parameter] public EventCallback<string> OnDone { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    string note = "";
+    bool busy;
+    string? error;
+
+    Task Close() => OnClose.InvokeAsync();
+
+    async Task Submit()
+    {
+        if (!Approving && string.IsNullOrWhiteSpace(note)) { error = "Please give a reason."; return; }
+        busy = true; error = null;
+        var r = await Action(string.IsNullOrWhiteSpace(note) ? null : note.Trim());
+        busy = false;
+        if (!r.Ok) { error = r.Error; return; }
+        await OnDone.InvokeAsync(Approving ? "Approved" : "Rejected");
+    }
+}

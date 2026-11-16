@@ -22,15 +22,15 @@
     <div class="no-print">
         <section class="card">
             <table class="tbl rows">
-                <thead><tr><th>Month</th><th class="r">Worked days</th><th class="r">Additions</th><th class="r">Deductions</th><th class="r">Net pay</th><th></th></tr></thead>
+                <thead><tr><th>Month</th><th class="r hide-sm">Worked days</th><th class="r hide-sm">Additions</th><th class="r hide-sm">Deductions</th><th class="r">Net pay</th><th></th></tr></thead>
                 <tbody>
                     @foreach (var p in slips)
                     {
                         <tr class="@(p.Month == selected ? "sel" : "")">
                             <td><strong>@Fmt.MonthLabel(p.Month)</strong></td>
-                            <td class="r">@p.WorkedDays.ToString("0.#")</td>
-                            <td class="r">@Fmt.Money(p.Addition)</td>
-                            <td class="r">@Fmt.Money(p.Deduction)</td>
+                            <td class="r hide-sm">@p.WorkedDays.ToString("0.#")</td>
+                            <td class="r hide-sm">@Fmt.Money(p.Addition)</td>
+                            <td class="r hide-sm">@Fmt.Money(p.Deduction)</td>
                             <td class="r"><b>@Fmt.Money(p.Net)</b></td>
                             <td class="r"><button type="button" class="btn ghost sm" @onclick="() => Open(p.Month)">View payslip</button></td>
                         </tr>

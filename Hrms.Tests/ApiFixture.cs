@@ -18,6 +18,8 @@ public sealed class ApiFixture : IAsyncLifetime
 {
     public const string Password = "Test1234x";
     public const string Admin = "TSTADM", Manager = "TSTMGR";
+    // a preparer below the document level (9) for asset handovers: the administrator role is at level 10 for assets, so it cannot play this part
+    public const string HrNine = "TSTHR9", HrNineRole = "TST-HR9";
     public const string AdminEmail = "tstadm@example.test";
 
     public WebApplicationFactory<Program> Factory = null!;
@@ -48,6 +50,11 @@ public sealed class ApiFixture : IAsyncLifetime
         await CreateUser(c, Admin, "HRM-ADM", "all", AdminEmail);
         await CreateUser(c, Manager, "HRM-MGR", "all", null);
         await CreateUser(c, Employee, "HRM-EMP", "self", null);
+        await c.ExecuteAsync(@"DELETE interface.accessright WHERE roleid = @r; DELETE interface.Roledef WHERE roleid = @r;
+            INSERT interface.Roledef (roleid, rolename, authlevel, Discount, Transactions) VALUES (@r, 'Test HR level 9', 9, 0, '0');
+            INSERT interface.accessright (roleid, optionid, addd, modifyy, delete1, access, [level], Prints, SinglePush)
+            SELECT @r, o, 1, 1, 1, 1, 9, 1, 0 FROM (VALUES ('H301'), ('H302'), ('H107'), ('H105'), ('H101')) v(o)", new { r = HrNineRole });
+        await CreateUser(c, HrNine, HrNineRole, "all", null);
     }
 
     public SqlConnection Open() { var c = new SqlConnection(connection); c.Open(); return c; }
@@ -88,7 +95,7 @@ public sealed class ApiFixture : IAsyncLifetime
         var errors = new List<string>();
         await using var c = Open();
         async Task Step(string label, Func<Task> action) { try { await action(); } catch (Exception ex) { errors.Add(label + ": " + ex.Message); } }
-        var users = extraUsers.Concat(["TSTADM", "TSTMGR", "TSTLOCK", "TSTPLAIN", "TSTMUST", "TSTOFF"]).Distinct().ToArray();
+        var users = extraUsers.Concat(["TSTADM", "TSTMGR", "TSTHR9", "TSTLOCK", "TSTPLAIN", "TSTMUST", "TSTOFF"]).Distinct().ToArray();
         var emp = Employee;
 
         if (emp.Length > 0)
@@ -126,6 +133,7 @@ public sealed class ApiFixture : IAsyncLifetime
         await Step("email", () => c.ExecuteAsync("DELETE hrms.EmailOutbox WHERE ToUser IN @users OR ToAddress LIKE '%@example.test'", new { users }));
         await Step("access lists", () => c.ExecuteAsync("DELETE inter01.AccessUser WHERE UserId IN @users", new { users }));
         await Step("users", () => c.ExecuteAsync("DELETE interface.Userdef WHERE userid IN @users", new { users }));
+        await Step("test role", () => c.ExecuteAsync("DELETE interface.accessright WHERE roleid = @r; DELETE interface.Roledef WHERE roleid = @r", new { r = HrNineRole }));
         if (reportErrors && errors.Count > 0) throw new InvalidOperationException("Test cleanup problems: " + string.Join(" | ", errors));
     }
 

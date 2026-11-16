@@ -1,0 +1,46 @@
+@inject PortalClient Portal
+@inject AuthState Auth
+
+@if (Auth.Can("H301") && !failed)
+{
+    <section class="card">
+        <div class="card-head"><h3>Company assets</h3><a class="link" href="admin/assets">Assets <Icon Name="arrow-right" Size="14" /></a></div>
+        @if (rows is null) { <p class="muted">Loading...</p> }
+        else if (rows.Count == 0) { <p class="muted">No company assets are issued to this employee.</p> }
+        else
+        {
+            <ul class="list">
+                @foreach (var a in rows)
+                {
+                    <li><div class="grow"><strong>@a.AssetName</strong><small>@a.AssetCode | @a.Category | Serial @a.SerialNo | since @Fmt.Date(a.IssueDate)</small></div><span class="chip-kind @AssetUi.StateClass(a.State)">@a.State</span></li>
+                }
+            </ul>
+            <p class="muted note">This employee cannot be cleared until these are returned.</p>
+        }
+        <div class="inbox-actions wrap">
+            @if (rows is { Count: > 0 }) { <a class="btn ghost" href="admin/assets/print/assigned/@EmpCode">Print list</a> }
+            @if (Auth.Can("H302")) { <a class="btn ghost" href="admin/clearance">Clearance</a> }
+        </div>
+    </section>
+}
+
+@code {
+    [Parameter, EditorRequired] public string EmpCode { get; set; } = "";
+
+    List<CustodyRow>? rows;
+    bool failed;
+    string? loaded;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (loaded == EmpCode || !Auth.Can("H301")) return;
+        loaded = EmpCode; rows = null; failed = false;
+        try
+        {
+            var held = await Portal.Custody("held", EmpCode) ?? [];
+            var pending = (await Portal.Custody("pending", EmpCode) ?? []).Where(p => p.IssueStatus == "Pending");
+            rows = held.Concat(pending).OrderBy(r => r.IssueDate).ToList();
+        }
+        catch { failed = true; }
+    }
+}

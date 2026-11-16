@@ -96,11 +96,15 @@ public static class AuthEndpoints
         ("/api/payroll/variable", "209"),
         ("/api/payroll/structure", "208"),
         ("/api/payroll/transfers", "1012"),
+        ("/api/admin/checks", "162"),       // payroll reports right
+        ("/api/assets", "H301"),
+        ("/api/clearance", "H302"),
     ];
 
     static string? OptionFor(string path)
     {
         if (path.StartsWith("/api/me/attendance", StringComparison.OrdinalIgnoreCase)) return "H106";
+        if (path.StartsWith("/api/me/assets", StringComparison.OrdinalIgnoreCase)) return "H107";
         if (path.StartsWith("/api/admin/email", StringComparison.OrdinalIgnoreCase)) return "H209";
         if (path.StartsWith("/api/admin/attendance/devices", StringComparison.OrdinalIgnoreCase)) return "H208";
         if (path.StartsWith("/api/admin/attendance/requests", StringComparison.OrdinalIgnoreCase)) return "H206";

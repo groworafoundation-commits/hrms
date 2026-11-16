@@ -1,0 +1,183 @@
+@page "/admin/assets/print/{Kind}"
+@page "/admin/assets/print/{Kind}/{Id:int}"
+@page "/admin/assets/print/assigned/{EmpCode}"
+@inject PortalClient Portal
+@inject HrmsClient Api
+@inject IJSRuntime Js
+@inject IHostServices Host
+
+<PageTitle>@title</PageTitle>
+
+<section class="greeting no-print">
+    <div><h1>@title</h1><p>Print this, or save it as a PDF, and sign where needed.</p></div>
+    <div class="page-actions">
+        <a class="btn ghost" href="admin/assets">Back to assets</a>
+        @if (ready)
+        {
+            <button type="button" class="btn ghost" @onclick="Print">Print</button>
+            <button type="button" class="btn primary" @onclick="SavePdf" disabled="@busyPdf">@(busyPdf ? "Creating PDF..." : "Save PDF")</button>
+        }
+    </div>
+</section>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    @if (ready)
+    {
+        <div class="paper-wrap">
+            <div class="slip">
+                <ReportHeader Company="company" Title="@title" Subtitle="@subtitle" />
+
+                @if (kind == "register")
+                {
+                    <table class="slip-table">
+                        <thead><tr><th>Tag</th><th>Category</th><th>Name</th><th>Serial</th><th class="r">Value</th><th>Status</th><th>Held by</th><th>Since</th></tr></thead>
+                        <tbody>
+                            @foreach (var a in register)
+                            {
+                                <tr><td>@a.AssetCode</td><td>@a.Category</td><td>@a.Name</td><td>@a.SerialNo</td><td class="r">@(a.Value is > 0 ? Fmt.Money(a.Value.Value) : "")</td><td>@(a.Status == "InStock" ? "In stock" : a.Status)</td><td>@(a.HolderCode is null ? "" : Fmt.Title(a.HolderName ?? a.HolderCode))</td><td>@(a.Since is null ? "" : Fmt.Date(a.Since))</td></tr>
+                            }
+                        </tbody>
+                        <tfoot><tr><td colspan="4">@register.Count assets | @register.Count(a => a.Status == "InStock") in stock | @register.Count(a => a.Status == "Issued") issued</td><td class="r">@Fmt.Money(register.Sum(a => a.Value ?? 0))</td><td colspan="3"></td></tr></tfoot>
+                    </table>
+                }
+                else if (kind == "assigned")
+                {
+                    @foreach (var g in held.GroupBy(h => h.EmpCode).OrderBy(g => g.First().EmpName))
+                    {
+                        <h4 class="slip-group">@Fmt.Title(g.First().EmpName ?? g.Key) (@g.Key)</h4>
+                        <table class="slip-table">
+                            <thead><tr><th>Tag</th><th>Category</th><th>Name</th><th>Serial</th><th>Issued</th><th>Condition</th><th>Document</th></tr></thead>
+                            <tbody>
+                                @foreach (var h in g.OrderBy(x => x.IssueDate)) { <tr><td>@h.AssetCode</td><td>@h.Category</td><td>@h.AssetName</td><td>@h.SerialNo</td><td>@Fmt.Date(h.IssueDate)</td><td>@h.ConditionOut</td><td>@h.DocNo</td></tr> }
+                            </tbody>
+                        </table>
+                    }
+                    @if (held.Count == 0) { <p class="muted">No assets are issued.</p> }
+                    else { <p class="muted note">@held.Count asset@(held.Count == 1 ? "" : "s") issued to @held.Select(h => h.EmpCode).Distinct().Count() employee@(held.Select(h => h.EmpCode).Distinct().Count() == 1 ? "" : "s").</p> }
+                }
+                else if (kind is "issue" or "return" && slip is not null)
+                {
+                    var isReturn = kind == "return";
+                    <dl class="slip-facts">
+                        <div><dt>Document</dt><dd>@(isReturn ? slip.ReturnDocNo : slip.DocNo)</dd></div>
+                        <div><dt>Date</dt><dd>@Fmt.Date(isReturn ? slip.ReturnDate : slip.IssueDate)</dd></div>
+                        <div><dt>Employee</dt><dd>@Fmt.Title(slip.EmpName ?? slip.EmpCode) (@slip.EmpCode)</dd></div>
+                    </dl>
+                    <table class="slip-table">
+                        <thead><tr><th>Tag</th><th>Category</th><th>Name</th><th>Serial</th><th>Condition</th></tr></thead>
+                        <tbody><tr><td>@slip.AssetCode</td><td>@slip.Category</td><td>@slip.AssetName</td><td>@slip.SerialNo</td><td>@(isReturn ? slip.ConditionIn : slip.ConditionOut)</td></tr></tbody>
+                    </table>
+                    @if (!string.IsNullOrEmpty(isReturn ? slip.ReturnNote : slip.IssueNote)) { <p class="muted">Note: @(isReturn ? slip.ReturnNote : slip.IssueNote)</p> }
+                    <p class="slip-terms">@(isReturn
+                        ? "The employee has returned the company equipment listed above in the condition stated."
+                        : "The employee confirms receiving the company equipment listed above, will use it only for company work, will look after it, and will return it on request or when employment ends. Loss or damage must be reported at once.")</p>
+                    <div class="slip-sign">
+                        <div><span></span><b>@(isReturn ? "Returned by (employee)" : "Issued by")</b><small>Name, signature and date</small></div>
+                        <div><span></span><b>@(isReturn ? "Received by" : "Received by (employee)")</b><small>Name, signature and date</small></div>
+                    </div>
+                }
+                else if (kind == "transfer" && transfer is not null)
+                {
+                    <dl class="slip-facts">
+                        <div><dt>Document</dt><dd>@transfer.DocNo</dd></div>
+                        <div><dt>Date</dt><dd>@Fmt.Date(transfer.TransferDate)</dd></div>
+                        <div><dt>From</dt><dd>@Fmt.Title(transfer.FromName ?? transfer.FromEmp) (@transfer.FromEmp)</dd></div>
+                        <div><dt>To</dt><dd>@Fmt.Title(transfer.ToName ?? transfer.ToEmp) (@transfer.ToEmp)</dd></div>
+                    </dl>
+                    <table class="slip-table">
+                        <thead><tr><th>Tag</th><th>Name</th><th>Serial</th><th>Condition</th></tr></thead>
+                        <tbody><tr><td>@transfer.AssetCode</td><td>@transfer.AssetName</td><td>@transfer.SerialNo</td><td>@transfer.Condition</td></tr></tbody>
+                    </table>
+                    @if (!string.IsNullOrEmpty(transfer.Note)) { <p class="muted">Note: @transfer.Note</p> }
+                    <p class="slip-terms">The equipment listed above passes from the first employee to the second, who accepts responsibility for it from the date shown.@(transfer.AcceptedAt is null ? "" : " Accepted on " + Fmt.Date(transfer.AcceptedAt) + ".")</p>
+                    <div class="slip-sign">
+                        <div><span></span><b>Given by</b><small>Name, signature and date</small></div>
+                        <div><span></span><b>Received by</b><small>Name, signature and date</small></div>
+                        <div><span></span><b>Approved by</b><small>Name, signature and date</small></div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</State>
+@if (saved is not null) { <div class="toast no-print"><span>@saved</span><button type="button" class="toast-btn" @onclick="() => saved = null">Close</button></div> }
+
+@code {
+    [Parameter] public string? Kind { get; set; }
+    [Parameter] public int? Id { get; set; }
+    [Parameter] public string? EmpCode { get; set; }
+
+    CompanyInfo? company;
+    List<AssetRow> register = [];
+    List<CustodyRow> held = [];
+    CustodyRow? slip;
+    AssetTransferRow? transfer;
+    string kind = "register", title = "Asset Register", subtitle = "";
+    string? error, saved, loadedKey;
+    bool loading = true, ready, busyPdf;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var key = $"{Kind}|{Id}|{EmpCode}";
+        if (key == loadedKey) return;
+        loadedKey = key;
+        await Load();
+    }
+
+    async Task Load()
+    {
+        loading = true; error = null; ready = false;
+        try
+        {
+            company ??= await Api.Company();
+            // "assigned/123": the route can read a number as the id
+            kind = EmpCode is not null || (Kind == "assigned") ? "assigned" : (Kind ?? "register").ToLowerInvariant();
+            var emp = EmpCode ?? (kind == "assigned" ? Id?.ToString() : null);
+            switch (kind)
+            {
+                case "register":
+                    title = "Asset Register"; subtitle = $"As of {DateTime.Today:d MMM yyyy}";
+                    register = (await Portal.Assets(null, null, null) ?? []).Where(a => a.Status != "Disposed").ToList();
+                    break;
+                case "assigned":
+                    title = "Assets Assigned to Employees"; subtitle = emp is null ? $"As of {DateTime.Today:d MMM yyyy}" : $"Employee {emp} | as of {DateTime.Today:d MMM yyyy}";
+                    held = await Portal.Custody("held", emp) ?? [];
+                    break;
+                case "issue":
+                    title = "Asset Issue Slip"; subtitle = "";
+                    slip = Id is { } i ? await Portal.CustodyOne(i) : null;
+                    if (slip is null) throw new InvalidOperationException("That handover was not found.");
+                    break;
+                case "return":
+                    title = "Asset Return Slip"; subtitle = "";
+                    slip = Id is { } r ? await Portal.CustodyOne(r) : null;
+                    if (slip is null || slip.ReturnStatus != "Approved") throw new InvalidOperationException("That asset has not been returned yet.");
+                    break;
+                case "transfer":
+                    title = "Asset Transfer Slip"; subtitle = "";
+                    transfer = Id is { } t ? await Portal.TransferOne(t) : null;
+                    if (transfer is null) throw new InvalidOperationException("That transfer was not found.");
+                    break;
+                default: throw new InvalidOperationException("Unknown report.");
+            }
+            ready = true;
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound) { error = "That document was not found."; }
+        catch (Exception ex) { error = ex.Message; }
+        loading = false;
+    }
+
+    async Task Print() => await Js.InvokeVoidAsync("print");
+
+    async Task SavePdf()
+    {
+        busyPdf = true; saved = null;
+        try
+        {
+            var r = await Host.SavePdf($"{title.Replace(' ', '-').ToLowerInvariant()}-{DateTime.Now:HHmmss}.pdf", kind is "register" or "assigned", title, $"{company?.Name}  |  {title}");
+            saved = r.Message;
+        }
+        catch (Exception ex) { saved = "Couldn't create the PDF: " + ex.Message; }
+        busyPdf = false;
+    }
+}

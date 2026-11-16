@@ -1,0 +1,166 @@
+@page "/approvals"
+@inject PortalClient Portal
+@inject AttendanceClient AttApi
+@inject AuthState Auth
+
+<PageTitle>Approvals inbox</PageTitle>
+
+<section class="greeting">
+    <div><h1>Approvals inbox</h1><p>@(Total == 0 ? "Nothing is waiting for you." : $"{Total} request{(Total == 1 ? "" : "s")} waiting for your decision.")</p></div>
+</section>
+
+<nav class="subnav">
+    <button type="button" class="subnav-item @(tab == "all" ? "active" : "")" @onclick='() => tab = "all"'>All (@Total)</button>
+    @if (canLeave) { <button type="button" class="subnav-item @(tab == "leave" ? "active" : "")" @onclick='() => tab = "leave"'>Leave (@leave.Count)</button> }
+    @if (canAtt) { <button type="button" class="subnav-item @(tab == "att" ? "active" : "")" @onclick='() => tab = "att"'>Attendance (@fixes.Count)</button> }
+    @if (canAssets) { <button type="button" class="subnav-item @(tab == "assets" ? "active" : "")" @onclick='() => tab = "assets"'>Assets (@assetItems.Count)</button> }
+</nav>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    <div class="inbox">
+        @foreach (var l in leave.Where(_ => tab is "all" or "leave").OrderBy(x => x.Applied ?? x.FromDate))
+        {
+            <article class="inbox-card">
+                <div class="who"><Avatar Name="@l.Name" Size="42" />
+                    <div class="grow"><strong>@Fmt.Title(l.Name)</strong><small>@l.EmpCode | requested @Fmt.Date(l.Applied)</small></div>
+                    <span class="chip-kind leave">Leave</span>
+                </div>
+                <div class="inbox-what"><b>@l.LeaveName</b> <span>@Fmt.Range(l.FromDate, l.ToDate) | @l.Days.ToString("0.#") day@(l.Days == 1 ? "" : "s")</span></div>
+                @if (l.FromUser is not null || !string.IsNullOrEmpty(l.Note)) { <p class="muted note">From @(l.FromUser is null ? "-" : Fmt.Title(l.FromUser))@if (!string.IsNullOrEmpty(l.Note)) { <text>: "@l.Note"</text> }</p> }
+                @if (l.Facts.Count > 0) { <ul class="facts-list">@foreach (var f in l.Facts) { <li>@f</li> }</ul> }
+                <div class="inbox-actions"><button type="button" class="btn primary" @onclick="() => reviewLeave = l">Review</button></div>
+            </article>
+        }
+        @foreach (var f in fixes.Where(_ => tab is "all" or "att").OrderBy(x => x.RequestedAt))
+        {
+            <article class="inbox-card">
+                <div class="who"><Avatar Name="@(f.Name ?? f.EmpCode)" Size="42" />
+                    <div class="grow"><strong>@Fmt.Title(f.Name ?? f.EmpCode)</strong><small>@f.EmpCode | asked @Fmt.Date(f.RequestedAt)</small></div>
+                    <span class="chip-kind att">Attendance</span>
+                </div>
+                <div class="inbox-what"><b>Missed punch, @f.WorkDate.ToString("ddd d MMM")</b> <span>In @Att.Time(f.InTime) | Out @Att.Time(f.OutTime)</span></div>
+                @if (!string.IsNullOrEmpty(f.Reason)) { <p class="muted note">"@f.Reason"</p> }
+                <div class="inbox-actions">
+                    @if (Auth.CanDelete("H206")) { <button type="button" class="btn ghost danger" @onclick="() => OpenReject(f)" disabled="@busy">Reject</button> }
+                    <button type="button" class="btn primary" @onclick="() => ApproveFix(f)" disabled="@busy">Approve</button>
+                </div>
+            </article>
+        }
+        @foreach (var w in assetItems.Where(_ => tab is "all" or "assets"))
+        {
+            <article class="inbox-card">
+                <div class="who"><span class="asset-icon"><Icon Name="laptop" Size="22" /></span>
+                    <div class="grow"><strong>@w.AssetName</strong><small>@w.AssetCode | @w.DocNo</small></div>
+                    <span class="chip-kind st-warn">Asset @AssetUi.KindLabel(w)</span></div>
+                <div class="inbox-what"><b>@AssetUi.Summary(w)</b><span>@Fmt.Date(w.Date)@(string.IsNullOrEmpty(w.Condition) ? "" : " | " + w.Condition)@(string.IsNullOrEmpty(w.Note) ? "" : " | " + w.Note)</span></div>
+                <div class="inbox-actions">
+                    <button type="button" class="btn ghost danger" @onclick="() => OpenAsset(w, false)">Reject</button>
+                    <button type="button" class="btn primary" @onclick="() => OpenAsset(w, true)">Approve</button>
+                </div>
+            </article>
+        }
+        @if (Total == 0) { <div class="card state empty"><h3>All caught up</h3><p>New leave, attendance and asset requests will appear here.</p></div> }
+    </div>
+</State>
+
+@if (reviewLeave is not null)
+{
+    <LeaveReviewModal Row="reviewLeave" OnClose="CloseLeave" OnDone="LeaveDone" />
+}
+
+@if (deciding is not null)
+{
+    <AssetDecideModal Summary="@AssetUi.Summary(deciding)" Approving="approvingAsset" Action="@(n => approvingAsset ? AssetUi.Approve(Portal, deciding, n) : AssetUi.Reject(Portal, deciding, n ?? ""))" OnClose="CloseAsset" OnDone="AssetDone" />
+}
+
+@if (rejecting is not null)
+{
+    <Modal Title="@($"Reject - {Fmt.Title(rejecting.Name ?? rejecting.EmpCode)}")" OnClose="CloseReject">
+        <div class="form">
+            <p class="muted">@rejecting.WorkDate.ToString("dddd, d MMMM yyyy"): @rejecting.Reason</p>
+            <label class="field full"><span>Reason for rejecting (required)</span><input type="text" maxlength="300" @bind="rejectNote" /></label>
+            @if (actionError is not null) { <div class="form-error">@actionError</div> }
+            <div class="form-actions">
+                <button type="button" class="btn ghost" @onclick="CloseReject" disabled="@busy">Cancel</button>
+                <button type="button" class="btn danger" @onclick="RejectFix" disabled="@busy">@(busy ? "Saving..." : "Reject request")</button>
+            </div>
+        </div>
+    </Modal>
+}
+@if (toast is not null) { <div class="toast">@toast</div> }
+
+@code {
+    List<ApprovalRow> leave = [];
+    List<FixRequest> fixes = [];
+    ApprovalRow? reviewLeave;
+    FixRequest? rejecting;
+    List<AssetWaiting> assetItems = [];
+    AssetWaiting? deciding;
+    bool approvingAsset;
+    string tab = "all", rejectNote = "";
+    bool loading = true, busy;
+    string? error, actionError, toast;
+
+    bool canLeave => Auth.Can("H201");
+    bool canAtt => Auth.Can("H206");
+    bool canAssets => Auth.Can("H301");
+    int Total => leave.Count + fixes.Count + assetItems.Count;
+
+    protected override Task OnInitializedAsync() => Load();
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try
+        {
+            leave = canLeave ? await Portal.Approvals() ?? [] : [];
+            fixes = canAtt ? await AttApi.Requests("Pending") ?? [] : [];
+            assetItems = canAssets ? (await Portal.AssetWaitingList() ?? []).Where(w => w.CanDecide).ToList() : [];
+        }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+        await InboxBadge.Refresh(Portal, AttApi, Auth);
+    }
+
+    void OpenAsset(AssetWaiting w, bool approve) { deciding = w; approvingAsset = approve; }
+    Task CloseAsset() { deciding = null; return Task.CompletedTask; }
+    async Task AssetDone(string message) { deciding = null; await Load(); await Toast(message); }
+
+    Task CloseLeave() { reviewLeave = null; return Task.CompletedTask; }
+
+    async Task LeaveDone(string message) { reviewLeave = null; await Load(); await Toast(message); }
+
+    async Task ApproveFix(FixRequest f)
+    {
+        busy = true;
+        var r = await AttApi.Approve(f.Id, "");
+        busy = false;
+        if (!r.Ok) { await Toast("Couldn't approve: " + r.Error); return; }
+        await Load();
+        await Toast("Approved: " + Fmt.Title(f.Name ?? f.EmpCode));
+    }
+
+    void OpenReject(FixRequest f) { rejecting = f; rejectNote = ""; actionError = null; }
+    Task CloseReject() { rejecting = null; return Task.CompletedTask; }
+
+    async Task RejectFix()
+    {
+        if (rejecting is null) return;
+        if (string.IsNullOrWhiteSpace(rejectNote)) { actionError = "Please give a reason."; return; }
+        busy = true; actionError = null;
+        var r = await AttApi.Reject(rejecting.Id, rejectNote.Trim());
+        busy = false;
+        if (!r.Ok) { actionError = r.Error; return; }
+        var who = Fmt.Title(rejecting.Name ?? rejecting.EmpCode);
+        rejecting = null;
+        await Load();
+        await Toast("Rejected: " + who);
+    }
+
+    async Task Toast(string message)
+    {
+        toast = message;
+        StateHasChanged();
+        await Task.Delay(3500); toast = null; StateHasChanged();
+    }
+}

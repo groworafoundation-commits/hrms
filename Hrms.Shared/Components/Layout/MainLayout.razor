@@ -2,6 +2,8 @@
 @implements IDisposable
 @inject AuthState Auth
 @inject HrmsClient Api
+@inject PortalClient Portal
+@inject AttendanceClient AttApi
 @inject NavigationManager Nav
 
 @if (!Auth.IsSignedIn)
@@ -59,7 +61,7 @@ else
         @if (Auth.Can(AuthState.EmployeeMaster)) { <NavLink href="employees"><Icon Name="users" /><span>Employees</span></NavLink> }
         @if (Auth.Can(AuthState.Leave)) { <NavLink href="leave"><Icon Name="calendar" /><span>Leave</span></NavLink> }
         @if (Auth.CanAny(AuthState.Grade, AuthState.Variable, AuthState.Loans, AuthState.Reports, "164")) { <NavLink href="payroll"><Icon Name="wallet" /><span>Payroll</span></NavLink> }
-        <button type="button" class="nav-out" @onclick="() => more = true"><Icon Name="grid" /><span>More</span></button>
+        <button type="button" class="nav-out" @onclick="() => more = true"><Icon Name="grid" /><span>More</span>@if (InboxBadge.Count > 0) { <b class="dot-count">@InboxBadge.Count</b> }</button>
     </nav>
 
     @if (more)
@@ -72,9 +74,9 @@ else
                     <div><strong>@Fmt.Title(Auth.User!.FullName)</strong><small>@Auth.User!.UserId | @Auth.User!.RoleName</small><small>@Auth.User!.Company | FY @Auth.User!.FinYear</small></div>
                 </div>
                 <div class="more-grid" @onclick="() => more = false">
-                    @foreach (var item in NavMenu.Items.Where(i => i.Options is null || Auth.CanAny(i.Options)))
+                    @foreach (var item in NavMenu.Items.Where(i => (i.Options is null || Auth.CanAny(i.Options)) && (i.Href != "my/ask" || Auth.User?.EmployeeCode is not null)))
                     {
-                        <NavLink class="more-item" href="@item.Href" Match="@(item.Href == "" ? NavLinkMatch.All : NavLinkMatch.Prefix)"><Icon Name="@item.Icon" Size="22" /><span>@item.Label</span></NavLink>
+                        <NavLink class="more-item" href="@item.Href" Match="@(item.Href == "" ? NavLinkMatch.All : NavLinkMatch.Prefix)"><Icon Name="@item.Icon" Size="22" /><span>@item.Label</span>@if (item.Href == "approvals" && InboxBadge.Count > 0) { <b class="nav-count">@InboxBadge.Count</b> }</NavLink>
                     }
                     @foreach (var m in (Auth.User?.Menu ?? []).OrderBy(x => x.Sequence))
                     {
@@ -98,9 +100,13 @@ else
     protected override void OnInitialized()
     {
         Auth.Changed += OnAuthChanged;
+        InboxBadge.Changed += OnBadge;
         if (!Auth.IsSignedIn) Nav.NavigateTo("login", replace: true);
         else if (Auth.User!.MustChange) Nav.NavigateTo("change-password", replace: true);
+        else if (Auth.CanAny("H201", "H206")) _ = InboxBadge.Refresh(Portal, AttApi, Auth);
     }
+
+    void OnBadge() => InvokeAsync(StateHasChanged);
 
     void OnAuthChanged() => InvokeAsync(() =>
     {
@@ -111,11 +117,12 @@ else
     async Task SignOut()
     {
         menu = more = false;
+        InboxBadge.Reset();
         await Api.Logout();
         Auth.SignOut();
     }
 
-    public void Dispose() => Auth.Changed -= OnAuthChanged;
+    public void Dispose() { Auth.Changed -= OnAuthChanged; InboxBadge.Changed -= OnBadge; }
 
     protected override void OnParametersSet() => boundary?.Recover();
 }

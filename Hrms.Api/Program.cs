@@ -6,6 +6,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddScoped<HrmsSession>();
 builder.Services.AddSingleton<AuthStore>();
 builder.Services.AddHostedService<EmailSender>();
+builder.Services.AddHostedService<ClearanceWatch>();
 builder.Services.AddSingleton(new Db(builder.Configuration.GetConnectionString("Main")
     ?? throw new InvalidOperationException("ConnectionStrings:Main is not configured. Use dotnet user-secrets.")));
 
@@ -25,6 +26,7 @@ if (!string.IsNullOrEmpty(certPath))
 
 var app = builder.Build();
 await Passwords.MigrateLegacy(app.Services.GetRequiredService<Db>());
+await AssetSchema.Ensure(app.Services.GetRequiredService<Db>(), app.Logger);
 
 if (!string.IsNullOrEmpty(certPath))
     app.Use(async (ctx, next) =>
@@ -171,6 +173,11 @@ app.MapAttendance();
 app.MapDevices();
 app.MapNotifications();
 app.MapLeaveBalances();
+app.MapAskHr();
+app.MapChecks();
+app.MapAssets();
+app.MapAssetExtras();
+app.MapClearance();
 app.MapReports();
 
 // any other address is a page of the web app (API calls are answered by the sign-in check first)

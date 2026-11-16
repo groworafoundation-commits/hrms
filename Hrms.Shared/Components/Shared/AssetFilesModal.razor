@@ -1,0 +1,118 @@
+@inject PortalClient Portal
+@inject IJSRuntime Js
+
+<Modal Title="@($"Photos and forms - {Title}")" Size="lg" OnClose="Close">
+    <div class="form">
+        @if (loading) { <p class="muted">Loading...</p> }
+        <div class="file-grid">
+            @foreach (var f in files)
+            {
+                <div class="file-card">
+                    @if (f.ContentType.StartsWith("image/") && thumbs.TryGetValue(f.Id, out var src)) { <img src="@src" alt="@f.FileName" @onclick="() => Open(f)" /> }
+                    else { <button type="button" class="file-pdf" @onclick="() => Open(f)"><Icon Name="file" Size="28" /><span>@(f.ContentType == "application/pdf" ? "PDF" : "Open")</span></button> }
+                    <b>@f.Kind</b>
+                    <small>@f.FileName | @Fmt.Date(f.UploadedAt)</small>
+                    @if (CanEdit) { <button type="button" class="btn ghost sm danger" @onclick="() => Remove(f)" disabled="@busy">Remove</button> }
+                </div>
+            }
+        </div>
+        @if (!loading && files.Count == 0) { <p class="muted">Nothing attached yet.</p> }
+
+        @if (preview is not null)
+        {
+            <div class="file-preview"><img src="@preview" alt="" /><button type="button" class="btn ghost sm" @onclick="() => preview = null">Close picture</button></div>
+        }
+
+        @if (CanEdit)
+        {
+            <div class="form-grid">
+                <label class="field"><span>This is a</span><select @bind="kind"><option>Photo</option><option>Handover form</option><option>Other</option></select></label>
+                <label class="field"><span>Take or choose a photo, or a PDF (up to 5 MB)</span><InputFile OnChange="Upload" accept="image/*,application/pdf" disabled="@busy" /></label>
+            </div>
+        }
+        @if (busy) { <p class="muted">Working...</p> }
+        @if (error is not null) { <div class="form-error">@error</div> }
+        <div class="form-actions"><button type="button" class="btn ghost" @onclick="Close">Close</button></div>
+    </div>
+</Modal>
+
+@code {
+    [Parameter, EditorRequired] public int AssetId { get; set; }
+    [Parameter] public string Title { get; set; } = "";
+    [Parameter] public bool CanEdit { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    List<AssetFileRow> files = [];
+    readonly Dictionary<int, string> thumbs = [];
+    string kind = "Photo";
+    string? preview, error;
+    bool loading = true, busy;
+
+    protected override Task OnInitializedAsync() => Load();
+
+    Task Close() => OnClose.InvokeAsync();
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try
+        {
+            files = await Portal.AssetFiles(AssetId) ?? [];
+            foreach (var f in files.Where(x => x.ContentType.StartsWith("image/") && !thumbs.ContainsKey(x.Id)))
+            {
+                var bytes = await Portal.AssetFileBytes(f.Id);
+                if (bytes is not null) thumbs[f.Id] = $"data:{f.ContentType};base64,{Convert.ToBase64String(bytes)}";
+            }
+        }
+        catch (Exception ex) { error = "Couldn't load the files: " + ex.Message; }
+        loading = false;
+    }
+
+    async Task Upload(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        busy = true; error = null;
+        try
+        {
+            var type = file.ContentType; var name = file.Name;
+            Stream source;
+            if (type.StartsWith("image/") && type != "image/gif")
+            {
+                // shrink big phone photos before sending them
+                try { var small = await file.RequestImageFileAsync("image/jpeg", 1600, 1600); source = small.OpenReadStream(5 * 1024 * 1024); type = "image/jpeg"; name = Path.ChangeExtension(name, ".jpg"); }
+                catch { source = file.OpenReadStream(5 * 1024 * 1024); }
+            }
+            else source = file.OpenReadStream(5 * 1024 * 1024);
+            using var ms = new MemoryStream();
+            await using (source) await source.CopyToAsync(ms);
+            ms.Position = 0;
+            var r = await Portal.UploadAssetFile(AssetId, kind, name, type, ms);
+            if (!r.Ok) error = r.Error; else await Load();
+        }
+        catch (Exception ex) { error = "Couldn't attach that file: " + ex.Message; }
+        busy = false;
+    }
+
+    async Task Open(AssetFileRow f)
+    {
+        error = null;
+        var bytes = await Portal.AssetFileBytes(f.Id);
+        if (bytes is null) { error = "Couldn't open that file."; return; }
+        var b64 = Convert.ToBase64String(bytes);
+        if (f.ContentType.StartsWith("image/")) { preview = $"data:{f.ContentType};base64,{b64}"; return; }
+        try
+        {
+            await Js.InvokeVoidAsync("eval", "window.__openBlob = (b64, type) => { const bin = atob(b64); const arr = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i); window.open(URL.createObjectURL(new Blob([arr], { type })), '_blank'); };");
+            await Js.InvokeVoidAsync("__openBlob", b64, f.ContentType);
+        }
+        catch { error = "This device could not open the PDF here. Open it from a computer."; }
+    }
+
+    async Task Remove(AssetFileRow f)
+    {
+        busy = true; error = null;
+        var r = await Portal.DeleteAssetFile(f.Id);
+        busy = false;
+        if (!r.Ok) error = r.Error; else { thumbs.Remove(f.Id); await Load(); }
+    }
+}

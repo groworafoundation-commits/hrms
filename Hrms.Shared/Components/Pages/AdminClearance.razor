@@ -1,0 +1,216 @@
+@page "/admin/clearance"
+@inject PortalClient Portal
+@inject AuthState Auth
+
+<PageTitle>Clearance</PageTitle>
+
+<section class="greeting">
+    <div><h1>Offboarding clearance</h1><p>Check everything is returned and settled before an employee leaves. Final clearance is blocked while any asset is still out.</p></div>
+    <div class="page-actions">@if (Auth.CanAdd("H302")) { <button type="button" class="btn primary" @onclick="() => starting = true"><Icon Name="plus" Size="16" /> Start clearance</button> }</div>
+</section>
+
+<nav class="subnav">
+    @foreach (var s in new[] { "Open", "Cleared", "Cancelled" })
+    {
+        <button type="button" class="subnav-item @(status == s ? "active" : "")" @onclick="() => SetStatus(s)">@s</button>
+    }
+</nav>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    @if (status == "Open" && leaving.Count > 0 && Auth.CanAdd("H302"))
+    {
+        <h4>Leaving soon, no clearance started</h4>
+        <div class="inbox">
+            @foreach (var l in leaving)
+            {
+                <article class="inbox-card">
+                    <div class="who"><Avatar Name="@l.Name" Size="42" /><div class="grow"><strong>@Fmt.Title(l.Name)</strong><small>@l.EmpCode | last day @Fmt.Date(l.TermDate)</small></div>
+                        <span class="chip-kind @(l.AssetsOut > 0 ? "st-bad" : "st-info")">@(l.AssetsOut > 0 ? $"{l.AssetsOut} asset{(l.AssetsOut == 1 ? "" : "s")} out" : "no assets")</span></div>
+                    <div class="inbox-actions"><button type="button" class="btn primary" @onclick="() => StartFor(l)">Start clearance</button></div>
+                </article>
+            }
+        </div>
+        <h4>Open clearances</h4>
+    }
+    <div class="inbox">
+        @foreach (var r in rows)
+        {
+            <article class="inbox-card">
+                <div class="who"><Avatar Name="@(r.EmpName ?? r.EmpCode)" Size="42" />
+                    <div class="grow"><strong>@Fmt.Title(r.EmpName ?? r.EmpCode)</strong><small>@r.EmpCode | started @Fmt.Date(r.StartedAt)</small></div>
+                    <span class="chip-kind @(r.Status == "Cleared" ? "st-ok" : r.Status == "Open" ? "st-warn" : "st-bad")">@r.Status</span></div>
+                <div class="inbox-what"><b>@(r.LastWorkingDay is null ? "No last day set" : "Last day " + Fmt.Date(r.LastWorkingDay))</b><span>@r.Reason</span></div>
+                @if (r.Status == "Open") { <p class="muted note">@(r.AssetsOut == 0 ? "No assets out" : $"{r.AssetsOut} asset{(r.AssetsOut == 1 ? "" : "s")} still out") | @(r.OpenItems == 0 ? "checklist done" : $"{r.OpenItems} checklist item{(r.OpenItems == 1 ? "" : "s")} open")</p> }
+                else if (r.ClearedAt is not null) { <p class="muted note">Cleared on @Fmt.Date(r.ClearedAt) by @r.ClearedBy</p> }
+                <div class="inbox-actions"><button type="button" class="btn primary" @onclick="() => Open(r.EmpCode)">@(r.Status == "Open" ? "Open checklist" : "View")</button></div>
+            </article>
+        }
+        @if (rows.Count == 0) { <div class="card state empty"><h3>Nothing here</h3><p>Start a clearance when an employee is leaving.</p></div> }
+    </div>
+</State>
+
+@if (starting)
+{
+    <Modal Title="Start clearance" OnClose="() => starting = false">
+        <div class="form">
+            <label class="field full"><span>Employee who is leaving</span><EmployeePick @bind-Value="newEmp" /></label>
+            <div class="form-grid">
+                <label class="field"><span>Last working day</span><input type="date" @bind="newLast" /></label>
+                <label class="field"><span>Reason</span><input type="text" maxlength="200" placeholder="Resigned, contract ended, ..." @bind="newReason" /></label>
+            </div>
+            @if (actionError is not null) { <div class="form-error">@actionError</div> }
+            <div class="form-actions"><button type="button" class="btn ghost" @onclick="() => starting = false" disabled="@busy">Cancel</button><button type="button" class="btn primary" @onclick="Start" disabled="@busy">@(busy ? "Starting..." : "Start")</button></div>
+        </div>
+    </Modal>
+}
+
+@if (detail is not null)
+{
+    <Modal Title="@($"Clearance - {Fmt.Title(detail.EmpName ?? detail.EmpCode)}")" Size="lg" OnClose="CloseDetail">
+        <div class="form">
+            @if (detail.Clearance is not null)
+            {
+                <p class="muted">@(detail.Clearance.LastWorkingDay is null ? "No last day set" : "Last working day " + Fmt.Date(detail.Clearance.LastWorkingDay))@(string.IsNullOrEmpty(detail.Clearance.Reason) ? "" : " | " + detail.Clearance.Reason) | @detail.Clearance.Status</p>
+            }
+
+            <h4>Checks</h4>
+            <ul class="check-list">
+                @foreach (var ch in detail.Checks)
+                {
+                    <li class="@(ch.Ok ? "ok" : ch.Blocking ? "bad" : "warn")"><Icon Name="@(ch.Ok ? "check" : "x")" Size="16" /><div><b>@ch.Title</b><small>@ch.Detail</small></div></li>
+                }
+            </ul>
+
+            @if (detail.Assets.Count > 0)
+            {
+                <h4>Assets still out</h4>
+                <ul class="check-list">
+                    @foreach (var a in detail.Assets) { <li class="bad"><Icon Name="laptop" Size="16" /><div><b>@a.AssetName (@a.AssetCode)</b><small>Serial @a.SerialNo | issued @Fmt.Date(a.IssueDate) | @a.State</small></div></li> }
+                </ul>
+                <a class="btn ghost" href="admin/assets">Go to assets to record the returns</a>
+            }
+
+            @if (detail.Clearance is not null)
+            {
+                <h4>Checklist</h4>
+                <ul class="check-list">
+                    @foreach (var it in detail.Items)
+                    {
+                        <li class="@(it.Done ? "ok" : "")">
+                            <input type="checkbox" checked="@it.Done" disabled="@(detail.Clearance.Status != "Open" || busy)" @onchange="e => Toggle(it, (bool)(e.Value ?? false))" />
+                            <div><b>@it.Title</b>@if (it.Done) { <small>Done @Fmt.Date(it.DoneAt) by @it.DoneBy</small> }</div>
+                        </li>
+                    }
+                </ul>
+                @if (detail.Clearance.Status == "Open")
+                {
+                    <div class="ask-form"><input type="text" maxlength="150" placeholder="Add another checklist item" @bind="extraItem" /><button type="button" class="btn ghost" @onclick="AddItem" disabled="@(busy || string.IsNullOrWhiteSpace(extraItem))">Add</button></div>
+                    @if (detail.Blockers.Count > 0) { <div class="form-error">@foreach (var b in detail.Blockers) { <div>@b</div> }</div> }
+                }
+            }
+            @if (actionError is not null) { <div class="form-error">@actionError</div> }
+            <div class="form-actions">
+                <button type="button" class="btn ghost" @onclick="CloseDetail" disabled="@busy">Close</button>
+                @if (detail.Clearance is { Status: "Open" } && Auth.CanAdd("H302"))
+                {
+                    <button type="button" class="btn ghost danger" @onclick="Cancel" disabled="@busy">Cancel clearance</button>
+                    <button type="button" class="btn primary" @onclick="Clear" disabled="@(busy || !detail.CanClear)" title="@(detail.CanClear ? "" : "Return all assets and finish the checklist first")">Mark as cleared</button>
+                }
+            </div>
+        </div>
+    </Modal>
+}
+@if (toast is not null) { <div class="toast">@toast</div> }
+
+@code {
+    List<ClearanceRow> rows = [];
+    List<LeavingRow> leaving = [];
+    ClearanceDetail? detail;
+    string status = "Open", newEmp = "", newReason = "", extraItem = "";
+    DateTime? newLast = DateTime.Today.AddDays(14);
+    bool loading = true, busy, starting;
+    string? error, actionError, toast;
+
+    protected override Task OnInitializedAsync() => Load();
+
+    async Task SetStatus(string s) { status = s; await Load(); }
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try { rows = await Portal.Clearances(status) ?? []; leaving = status == "Open" ? await Portal.Leaving() ?? [] : []; }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+
+    async Task Open(string emp)
+    {
+        actionError = null; extraItem = "";
+        try { detail = await Portal.ClearanceFor(emp); }
+        catch (Exception ex) { error = "Couldn't open the clearance: " + ex.Message; }
+    }
+
+    void StartFor(LeavingRow l) { newEmp = l.EmpCode; newLast = l.TermDate; newReason = "Leaving"; actionError = null; starting = true; }
+
+    void CloseDetail() { detail = null; actionError = null; }
+
+    async Task Refresh() { if (detail is not null) await Open(detail.EmpCode); await Load(); }
+
+    async Task Start()
+    {
+        busy = true; actionError = null;
+        var r = await Portal.StartClearance(new { empCode = newEmp, lastWorkingDay = newLast, reason = newReason });
+        busy = false;
+        if (!r.Ok) { actionError = r.Error; return; }
+        var emp = newEmp; starting = false; newEmp = newReason = "";
+        status = "Open"; await Load(); await Open(emp);
+        await Toast("Clearance started");
+    }
+
+    async Task Toggle(ClearanceItemRow it, bool done)
+    {
+        busy = true; actionError = null;
+        var r = await Portal.ToggleClearanceItem(it.Id, done, null);
+        busy = false;
+        if (!r.Ok) actionError = r.Error;
+        await Refresh();
+    }
+
+    async Task AddItem()
+    {
+        busy = true; actionError = null;
+        var r = await Portal.AddClearanceItem(detail!.Clearance!.Id, extraItem);
+        busy = false;
+        if (!r.Ok) { actionError = r.Error; return; }
+        extraItem = "";
+        await Refresh();
+    }
+
+    async Task Clear()
+    {
+        busy = true; actionError = null;
+        var r = await Portal.ClearEmployee(detail!.Clearance!.Id);
+        busy = false;
+        if (!r.Ok) { actionError = r.Error; await Refresh(); return; }
+        var who = Fmt.Title(detail.EmpName ?? detail.EmpCode);
+        detail = null; await Load();
+        await Toast("Cleared: " + who);
+    }
+
+    async Task Cancel()
+    {
+        busy = true; actionError = null;
+        var r = await Portal.CancelClearance(detail!.Clearance!.Id);
+        busy = false;
+        if (!r.Ok) { actionError = r.Error; return; }
+        detail = null; await Load();
+        await Toast("Clearance cancelled");
+    }
+
+    async Task Toast(string message)
+    {
+        toast = message;
+        StateHasChanged();
+        await Task.Delay(3500); toast = null; StateHasChanged();
+    }
+}

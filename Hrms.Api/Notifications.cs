@@ -132,6 +132,21 @@ public static class NotificationEndpoints
             return Results.Ok();
         });
 
+        // a person can remove their own notifications from the list (the bell only ever shows their own)
+        app.MapPost("/api/notifications/{id:long}/dismiss", async (Db db, HttpContext ctx, long id) =>
+        {
+            await using var c = db.OpenWrite();
+            await c.ExecuteAsync("DELETE FROM hrms.Notification WHERE Id=@id AND UserId=@me", new { id, me = ((AuthUser)ctx.Items["user"]!).UserId });
+            return Results.Ok();
+        });
+
+        app.MapPost("/api/notifications/clear", async (Db db, HttpContext ctx) =>
+        {
+            await using var c = db.OpenWrite();
+            await c.ExecuteAsync("DELETE FROM hrms.Notification WHERE UserId=@me", new { me = ((AuthUser)ctx.Items["user"]!).UserId });
+            return Results.Ok();
+        });
+
         // admin: the outbox, and a test email
         app.MapGet("/api/admin/email", async (Db db, IConfiguration cfg) =>
         {

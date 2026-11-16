@@ -1,0 +1,311 @@
+@page "/admin/assets"
+@inject PortalClient Portal
+@inject AttendanceClient Att
+@inject AuthState Auth
+
+<PageTitle>Assets</PageTitle>
+
+<section class="greeting">
+    <div><h1>Company assets</h1><p>Laptops, phones, SIMs and other equipment issued to employees. Handovers follow the ERP's asset rules.</p></div>
+    <div class="page-actions">
+        <a class="btn ghost" href="admin/assets/print/register">Register report</a>
+        <a class="btn ghost" href="admin/assets/print/assigned">Assigned report</a>
+        @if (Auth.CanAdd("H301")) { <button type="button" class="btn ghost" @onclick="() => importing = true">Import</button><button type="button" class="btn primary" @onclick="OpenAdd"><Icon Name="plus" Size="16" /> Add asset</button> }
+    </div>
+</section>
+
+<nav class="subnav">
+    <button type="button" class="subnav-item @(tab == "register" ? "active" : "")" @onclick='() => tab = "register"'>Register (@assets.Count)</button>
+    <button type="button" class="subnav-item @(tab == "waiting" ? "active" : "")" @onclick='() => tab = "waiting"'>Waiting (@waiting.Count)</button>
+    <button type="button" class="subnav-item @(tab == "history" ? "active" : "")" @onclick='() => tab = "history"'>History</button>
+</nav>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    @if (tab == "register")
+    {
+        <section class="card">
+            <div class="form-grid">
+                <label class="field"><span>Search</span><input type="text" placeholder="Tag, name, serial or employee" @bind="q" @bind:event="oninput" /></label>
+                <label class="field"><span>Show</span>
+                    <select @bind="statusFilter"><option value="">All</option><option value="InStock">In stock</option><option value="Issued">Issued</option><option value="Disposed">Disposed</option></select></label>
+            </div>
+        </section>
+        <div class="inbox">
+            @foreach (var a in Shown)
+            {
+                <article class="inbox-card">
+                    <div class="who">
+                        <span class="asset-icon"><Icon Name="@AssetUi.Icon(a.Category)" Size="22" /></span>
+                        <div class="grow"><strong>@a.Name</strong><small>@a.AssetCode | @a.Category | Serial @a.SerialNo</small></div>
+                        <span class="chip-kind @(a.Status == "InStock" ? "st-ok" : a.Status == "Issued" ? "st-info" : "st-bad")">@(a.Status == "InStock" ? "In stock" : a.Status)</span>
+                    </div>
+                    @if (a.HolderCode is not null) { <div class="inbox-what"><b>@(a.State) @Fmt.Title(a.HolderName ?? a.HolderCode)</b><span>@a.HolderCode | since @Fmt.Date(a.Since)</span></div> }
+                    @if (a.Value is > 0) { <p class="muted note">Value @Fmt.Money(a.Value.Value)@(a.PurchaseDate is null ? "" : " | bought " + Fmt.Date(a.PurchaseDate))</p> }
+                    <div class="inbox-actions wrap">
+                        @if (a.Status == "InStock" && Auth.CanAdd("H301")) { <button type="button" class="btn primary" @onclick="() => OpenIssue(a)">Issue</button> }
+                        @if (a.CustodyId is not null && a.State == "With employee" && Auth.CanAdd("H301"))
+                        {
+                            <button type="button" class="btn primary" @onclick="() => OpenReturn(a)">Return</button>
+                            <button type="button" class="btn ghost" @onclick="() => OpenTransfer(a)">Transfer</button>
+                        }
+                        @if (a.CustodyId is not null && a.State is "With employee" or "Transfer waiting acceptance" or "Transfer waiting approval") { <a class="btn ghost" href="admin/assets/print/issue/@a.CustodyId">Issue slip</a> }
+                        <button type="button" class="btn ghost" @onclick="() => files = a">Photos</button>
+                        @if (Auth.CanEdit("H301") && a.Status != "Disposed") { <button type="button" class="btn ghost" @onclick="() => OpenEdit(a)">Edit</button> }
+                        @if (a.Status == "InStock" && Auth.CanDelete("H301")) { <button type="button" class="btn ghost danger" @onclick="() => dispose = a">Dispose</button> }
+                    </div>
+                </article>
+            }
+            @if (!Shown.Any()) { <div class="card state empty"><h3>No assets</h3><p>Add the first asset, or import a spreadsheet, with the buttons above.</p></div> }
+        </div>
+    }
+    else if (tab == "waiting")
+    {
+        <div class="inbox">
+            @foreach (var w in waiting)
+            {
+                <article class="inbox-card">
+                    <div class="who"><span class="asset-icon"><Icon Name="laptop" Size="22" /></span><div class="grow"><strong>@w.AssetName</strong><small>@w.AssetCode | @w.DocNo | prepared by @w.PreparedBy</small></div>
+                        <span class="chip-kind st-warn">@AssetUi.KindLabel(w)</span></div>
+                    <div class="inbox-what"><b>@AssetUi.Summary(w)</b><span>@Fmt.Date(w.Date)@(string.IsNullOrEmpty(w.Condition) ? "" : " | " + w.Condition)@(string.IsNullOrEmpty(w.Note) ? "" : " | " + w.Note)</span></div>
+                    <div class="inbox-actions">
+                        @if (w.CanDecide)
+                        {
+                            <button type="button" class="btn ghost danger" @onclick="() => OpenDecide(w, false)">Reject</button>
+                            <button type="button" class="btn primary" @onclick="() => OpenDecide(w, true)">Approve</button>
+                        }
+                        @if (w.CanAccept) { <button type="button" class="btn primary" @onclick="() => ReceiveFor(w)" disabled="@busy">Receive for @Fmt.Title(w.ToEmpName ?? w.ToEmpCode ?? "")</button> }
+                        @if (w.Kind is "Issue" or "Return" or "Transfer" && string.Equals(w.PreparedBy, Auth.User?.UserId, StringComparison.OrdinalIgnoreCase)) { <button type="button" class="btn ghost" @onclick="() => Withdraw(w)" disabled="@busy">Withdraw</button> }
+                        @if (!w.CanDecide && !w.CanAccept) { <span class="muted note">@(w.Kind == "Acceptance" ? "Waiting for the receiver to accept." : "Waiting for someone at the approval level.")</span> }
+                    </div>
+                </article>
+            }
+            @if (waiting.Count == 0) { <div class="card state empty"><h3>Nothing waiting</h3><p>Issues, returns and transfers that need approval, or the receiver's acceptance, appear here.</p></div> }
+        </div>
+    }
+    else
+    {
+        <div class="inbox">
+            @foreach (var h in history)
+            {
+                <article class="inbox-card">
+                    <div class="who"><Avatar Name="@(h.EmpName ?? h.EmpCode)" Size="36" /><div class="grow"><strong>@h.AssetName</strong><small>@h.AssetCode | @Fmt.Title(h.EmpName ?? h.EmpCode)</small></div><span class="chip-kind @AssetUi.StateClass(h.State)">@h.State</span></div>
+                    <div class="inbox-what"><b>Issued @Fmt.Date(h.IssueDate)</b><span>@(h.ReturnDate is null ? "" : "returned " + Fmt.Date(h.ReturnDate) + (string.IsNullOrEmpty(h.ConditionIn) ? "" : ", " + h.ConditionIn))@(h.IssueStatus == "Rejected" && !string.IsNullOrEmpty(h.IssueDecisionNote) ? "Rejected: " + h.IssueDecisionNote : "")</span></div>
+                    <div class="inbox-actions">
+                        <a class="btn ghost" href="admin/assets/print/issue/@h.Id">Issue slip</a>
+                        @if (h.State == "Returned") { <a class="btn ghost" href="admin/assets/print/return/@h.Id">Return slip</a> }
+                    </div>
+                </article>
+            }
+            @foreach (var t in transfers)
+            {
+                <article class="inbox-card">
+                    <div class="who"><span class="asset-icon"><Icon Name="laptop" Size="22" /></span><div class="grow"><strong>@t.AssetName</strong><small>@t.AssetCode | @t.DocNo</small></div><span class="chip-kind @(t.Status == "Completed" ? "st-info" : "st-bad")">Transfer @t.Status.ToLowerInvariant()</span></div>
+                    <div class="inbox-what"><b>@Fmt.Title(t.FromName ?? t.FromEmp) to @Fmt.Title(t.ToName ?? t.ToEmp)</b><span>@Fmt.Date(t.TransferDate)@(t.AcceptedAt is null ? "" : " | accepted " + Fmt.Date(t.AcceptedAt))@(t.Status == "Rejected" && !string.IsNullOrEmpty(t.DecisionNote) ? " | " + t.DecisionNote : "")</span></div>
+                    @if (t.Status == "Completed") { <div class="inbox-actions"><a class="btn ghost" href="admin/assets/print/transfer/@t.Id">Transfer slip</a></div> }
+                </article>
+            }
+            @if (history.Count == 0 && transfers.Count == 0) { <div class="card state empty"><h3>No history yet</h3></div> }
+        </div>
+    }
+</State>
+
+@if (form is not null)
+{
+    <Modal Title="@(editing is null ? "Add asset" : "Edit asset")" OnClose="CloseAll">
+        <div class="form">
+            <div class="form-grid">
+                <label class="field"><span>Tag / asset code</span><input type="text" maxlength="30" @bind="form.AssetCode" /></label>
+                <label class="field"><span>Category</span><select @bind="form.Category"><option value="">Choose</option>@foreach (var c in categories) { <option value="@c">@c</option> }</select></label>
+                <label class="field full"><span>Name / model</span><input type="text" maxlength="150" @bind="form.Name" /></label>
+                <label class="field"><span>Serial number (required)</span><input type="text" maxlength="100" @bind="form.SerialNo" /></label>
+                <label class="field"><span>Value</span><input type="number" step="0.01" @bind="form.Value" /></label>
+                <label class="field"><span>Purchase date</span><input type="date" @bind="form.PurchaseDate" /></label>
+                <label class="field full"><span>Notes</span><input type="text" maxlength="300" @bind="form.Notes" /></label>
+            </div>
+            @if (actionError is not null) { <div class="form-error">@actionError</div> }
+            <div class="form-actions"><button type="button" class="btn ghost" @onclick="CloseAll" disabled="@busy">Cancel</button><button type="button" class="btn primary" @onclick="SaveAsset" disabled="@busy">@(busy ? "Saving..." : "Save")</button></div>
+        </div>
+    </Modal>
+}
+
+@if (issuing is not null)
+{
+    <Modal Title="@($"Issue {issuing.Name}")" OnClose="CloseAll">
+        <div class="form">
+            <p class="muted">@issuing.AssetCode | Serial @issuing.SerialNo</p>
+            <label class="field full"><span>Employee</span><EmployeePick @bind-Value="empPick" /></label>
+            <div class="form-grid">
+                <label class="field"><span>Date</span><input type="date" @bind="actionDate" /></label>
+                <label class="field"><span>Condition</span><input type="text" maxlength="100" placeholder="New, good, ..." @bind="condition" /></label>
+                <label class="field full"><span>Note</span><input type="text" maxlength="300" @bind="note" /></label>
+            </div>
+            <p class="muted note">An issue counts as done once a person at the document level approves it, as in the ERP.</p>
+            @if (actionError is not null) { <div class="form-error">@actionError</div> }
+            <div class="form-actions"><button type="button" class="btn ghost" @onclick="CloseAll" disabled="@busy">Cancel</button><button type="button" class="btn primary" @onclick="SaveIssue" disabled="@busy">@(busy ? "Saving..." : "Issue")</button></div>
+        </div>
+    </Modal>
+}
+
+@if (returning is not null)
+{
+    <Modal Title="@($"Return {returning.Name}")" OnClose="CloseAll">
+        <div class="form">
+            <p class="muted">@returning.AssetCode | with @Fmt.Title(returning.HolderName ?? returning.HolderCode ?? "")</p>
+            <div class="form-grid">
+                <label class="field"><span>Return date</span><input type="date" @bind="actionDate" /></label>
+                <label class="field"><span>Condition</span><input type="text" maxlength="100" placeholder="Good, damaged, ..." @bind="condition" /></label>
+                <label class="field full"><span>Note</span><input type="text" maxlength="300" @bind="note" /></label>
+            </div>
+            @if (actionError is not null) { <div class="form-error">@actionError</div> }
+            <div class="form-actions"><button type="button" class="btn ghost" @onclick="CloseAll" disabled="@busy">Cancel</button><button type="button" class="btn primary" @onclick="SaveReturn" disabled="@busy">@(busy ? "Saving..." : "Record return")</button></div>
+        </div>
+    </Modal>
+}
+
+@if (transferring is not null)
+{
+    <Modal Title="@($"Transfer {transferring.Name}")" OnClose="CloseAll">
+        <div class="form">
+            <p class="muted">@transferring.AssetCode | now with @Fmt.Title(transferring.HolderName ?? transferring.HolderCode ?? "")</p>
+            <label class="field full"><span>Give it to</span><EmployeePick @bind-Value="empPick" /></label>
+            <div class="form-grid">
+                <label class="field"><span>Transfer date</span><input type="date" @bind="actionDate" /></label>
+                <label class="field"><span>Condition</span><input type="text" maxlength="100" placeholder="Good, ..." @bind="condition" /></label>
+                <label class="field full"><span>Note</span><input type="text" maxlength="300" @bind="note" /></label>
+            </div>
+            <p class="muted note">As in the ERP, the transfer is approved first and then the receiver accepts it. Until then the asset stays with the first person.</p>
+            @if (actionError is not null) { <div class="form-error">@actionError</div> }
+            <div class="form-actions"><button type="button" class="btn ghost" @onclick="CloseAll" disabled="@busy">Cancel</button><button type="button" class="btn primary" @onclick="SaveTransfer" disabled="@busy">@(busy ? "Saving..." : "Start transfer")</button></div>
+        </div>
+    </Modal>
+}
+
+@if (deciding is not null)
+{
+    <AssetDecideModal Summary="@AssetUi.Summary(deciding)" Approving="approving" Action="@(n => approving ? AssetUi.Approve(Portal, deciding, n) : AssetUi.Reject(Portal, deciding, n ?? ""))" OnClose="CloseDecide" OnDone="DecideDone" />
+}
+
+@if (dispose is not null)
+{
+    <ConfirmModal Title="Dispose of this asset?" Message="@($"{dispose.Name} ({dispose.AssetCode}) will be marked as disposed and can no longer be issued.")" ConfirmText="Dispose" Busy="busy" Error="@actionError" OnConfirm="DoDispose" OnCancel="CloseAll" />
+}
+
+@if (files is not null) { <AssetFilesModal AssetId="files.Id" Title="@($"{files.Name} ({files.AssetCode})")" CanEdit="CanAddAssets" OnClose="() => files = null" /> }
+@if (importing) { <AssetImportModal OnClose="() => importing = false" OnDone="ImportDone" /> }
+@if (toast is not null) { <div class="toast">@toast</div> }
+
+@code {
+    class AssetForm { public string AssetCode { get; set; } = ""; public string Category { get; set; } = ""; public string Name { get; set; } = ""; public string SerialNo { get; set; } = ""; public decimal? Value { get; set; } public DateTime? PurchaseDate { get; set; } public string? Notes { get; set; } }
+
+    List<AssetRow> assets = [];
+    List<AssetWaiting> waiting = [];
+    List<CustodyRow> history = [];
+    List<AssetTransferRow> transfers = [];
+    List<string> categories = [];
+    string tab = "register", q = "", statusFilter = "";
+    bool loading = true, busy, approving, importing;
+    string? error, actionError, toast;
+
+    AssetForm? form; AssetRow? editing, issuing, returning, transferring, dispose, files; AssetWaiting? deciding;
+    string empPick = "", condition = "", note = "";
+    DateTime actionDate = DateTime.Today;
+
+    bool CanAddAssets => Auth.CanAdd("H301");
+
+    IEnumerable<AssetRow> Shown => assets.Where(a => (statusFilter == "" || a.Status == statusFilter)
+        && (string.IsNullOrWhiteSpace(q) || $"{a.AssetCode} {a.Name} {a.SerialNo} {a.HolderCode} {a.HolderName}".Contains(q.Trim(), StringComparison.OrdinalIgnoreCase)));
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { categories = await Portal.AssetCategories() ?? []; } catch { }
+        await Load();
+    }
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try
+        {
+            assets = await Portal.Assets(null, null, null) ?? [];
+            waiting = await Portal.AssetWaitingList() ?? [];
+            history = await Portal.Custody("history") ?? [];
+            transfers = await Portal.AssetTransfers("history") ?? [];
+        }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+
+    void CloseAll() { form = null; editing = issuing = returning = transferring = dispose = null; actionError = null; }
+    void Reset() { empPick = ""; condition = ""; note = ""; actionDate = DateTime.Today; actionError = null; }
+
+    void OpenAdd() { form = new(); editing = null; actionError = null; }
+    void OpenEdit(AssetRow a) { editing = a; form = new() { AssetCode = a.AssetCode, Category = a.Category, Name = a.Name, SerialNo = a.SerialNo, Value = a.Value, PurchaseDate = a.PurchaseDate, Notes = a.Notes }; actionError = null; }
+    void OpenIssue(AssetRow a) { Reset(); issuing = a; }
+    void OpenReturn(AssetRow a) { Reset(); returning = a; }
+    void OpenTransfer(AssetRow a) { Reset(); transferring = a; }
+    void OpenDecide(AssetWaiting w, bool approve) { deciding = w; approving = approve; }
+    Task CloseDecide() { deciding = null; return Task.CompletedTask; }
+    async Task DecideDone(string message) { deciding = null; await Refreshed(message); }
+
+    async Task Refreshed(string message)
+    {
+        await Load();
+        await InboxBadge.Refresh(Portal, Att, Auth);
+        toast = message;
+        StateHasChanged();
+        await Task.Delay(3500); toast = null; StateHasChanged();
+    }
+
+    async Task Finish(WriteResult r, string done)
+    {
+        busy = false;
+        if (!r.Ok) { actionError = r.Error; return; }
+        CloseAll();
+        await Refreshed(done);
+    }
+
+    async Task SaveAsset()
+    {
+        busy = true; actionError = null;
+        var body = new { assetCode = form!.AssetCode, category = form.Category, name = form.Name, serialNo = form.SerialNo, value = form.Value, purchaseDate = form.PurchaseDate, notes = form.Notes };
+        await Finish(editing is null ? await Portal.AddAsset(body) : await Portal.UpdateAsset(editing.Id, body), editing is null ? "Asset added" : "Asset updated");
+    }
+
+    async Task SaveIssue()
+    {
+        busy = true; actionError = null;
+        await Finish(await Portal.IssueAsset(issuing!.Id, new { empCode = empPick, date = actionDate, condition, note }), "Issued. It counts once approved, if your level needs that.");
+    }
+
+    async Task SaveReturn()
+    {
+        busy = true; actionError = null;
+        await Finish(await Portal.ReturnAsset(returning!.CustodyId!.Value, new { date = actionDate, condition, note }), "Return recorded");
+    }
+
+    async Task SaveTransfer()
+    {
+        busy = true; actionError = null;
+        await Finish(await Portal.TransferAsset(transferring!.CustodyId!.Value, new { toEmp = empPick, date = actionDate, condition, note }), "Transfer started");
+    }
+
+    async Task Withdraw(AssetWaiting w)
+    {
+        busy = true;
+        var r = w.Kind == "Transfer" ? await Portal.WithdrawTransfer(w.Id) : await Portal.WithdrawAsset(w.Id);
+        busy = false;
+        await Refreshed(r.Ok ? "Withdrawn. You can prepare it again." : (r.Error ?? "Couldn't withdraw it."));
+    }
+
+    async Task ReceiveFor(AssetWaiting w)
+    {
+        busy = true;
+        var r = await Portal.AcceptTransferForEmployee(w.Id);
+        busy = false;
+        await Refreshed(r.Ok ? "Transfer completed" : (r.Error ?? "Couldn't complete the transfer."));
+    }
+
+    async Task DoDispose() { busy = true; actionError = null; await Finish(await Portal.DisposeAsset(dispose!.Id), "Asset disposed"); }
+
+    async Task ImportDone(string message) { importing = false; await Refreshed(message); }
+}

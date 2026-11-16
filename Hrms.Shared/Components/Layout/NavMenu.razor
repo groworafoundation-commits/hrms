@@ -8,11 +8,12 @@
     </div>
 
     <nav class="nav">
-        @foreach (var item in Items.Where(i => i.Options is null || Auth.CanAny(i.Options)))
+        @foreach (var item in Items.Where(i => (i.Options is null || Auth.CanAny(i.Options)) && (i.Href != "my/ask" || Auth.User?.EmployeeCode is not null)))
         {
             <NavLink class="nav-item" href="@item.Href" Match="@(item.Href == "" ? NavLinkMatch.All : NavLinkMatch.Prefix)">
                 <Icon Name="@item.Icon" />
                 <span>@item.Label</span>
+                @if (item.Href == "approvals" && InboxBadge.Count > 0) { <b class="nav-count">@InboxBadge.Count</b> }
             </NavLink>
         }
         @foreach (var m in (Auth.User?.Menu ?? []).OrderBy(x => x.Sequence))
@@ -33,15 +34,23 @@
 </aside>
 
 @inject AuthState Auth
+@implements IDisposable
 
 @code {
     public record NavItem(string Label, string Icon, string Href, string[]? Options = null);
+
+    protected override void OnInitialized() => InboxBadge.Changed += OnBadge;
+    void OnBadge() => InvokeAsync(StateHasChanged);
+    public void Dispose() => InboxBadge.Changed -= OnBadge;
 
     public static readonly NavItem[] Items =
     [
         new("Dashboard", "home", "", AuthState.OrgOptions),
         new("Employees", "users", "employees", [AuthState.EmployeeMaster]),
         new("Leave Management", "calendar", "leave", [AuthState.Leave]),
+        new("Approvals inbox", "check", "approvals", ["H201", "H206"]),
+        new("Ask HR", "bot", "my/ask", ["H105"]),
+        new("Payroll & attendance checks", "shield", "admin/checks", [AuthState.Reports]),
         new("Payroll", "wallet", "payroll", [AuthState.Grade, AuthState.Variable, AuthState.Loans, AuthState.Transfer, AuthState.Reports, "164"]),
         new("Reports & Analytics", "chart", "payroll/reports", [AuthState.Reports, "164"]),
     ];

@@ -1,0 +1,134 @@
+@using System.Globalization
+@inject PortalClient Portal
+@inject IHostServices Host
+
+<Modal Title="Import assets from a spreadsheet" Size="lg" OnClose="Close">
+    <div class="form">
+        <p class="muted">Copy the rows from Excel (or open a .csv file) and paste them here. The first row must be the column names. Nothing is saved unless every row is correct.</p>
+        <p class="muted note">Columns: <b>Tag, Category, Name, Serial, Value, PurchaseDate, Notes</b>. To record that an asset is already with someone, add <b>Employee</b> (employee code) and <b>IssueDate</b>; that needs the approval level.</p>
+        <div class="form-actions" style="justify-content:flex-start">
+            <button type="button" class="btn ghost sm" @onclick="DownloadTemplate">Download a template</button>
+        </div>
+        <label class="field full"><span>Choose a .csv file</span><InputFile OnChange="LoadFile" accept=".csv,.tsv,.txt,text/csv,text/plain" /></label>
+        <label class="field full"><span>Or paste the rows here</span><textarea rows="8" @bind="text" @bind:event="oninput" placeholder="Tag, Category, Name, Serial, Value"></textarea></label>
+
+        @if (parseError is not null) { <div class="form-error">@parseError</div> }
+        @if (response is not null)
+        {
+            if (response.Error is not null) { <div class="form-error">@response.Error</div> }
+            else if (response.Ok) { <div class="form-ok">All @lines.Count rows are correct.@(response.Assigned > 0 ? $" {response.Assigned} are already with an employee." : "")</div> }
+            else
+            {
+                <div class="form-error"><b>@response.Results.Count(r => !r.Ok) row@(response.Results.Count(r => !r.Ok) == 1 ? "" : "s") need fixing. Nothing was saved.</b>
+                    <ul class="facts-list">@foreach (var r in response.Results.Where(r => !r.Ok).Take(30)) { <li>Row @r.Row: @r.Error</li> }</ul></div>
+            }
+        }
+        <div class="form-actions">
+            <button type="button" class="btn ghost" @onclick="Close" disabled="@busy">Close</button>
+            <button type="button" class="btn ghost" @onclick="Check" disabled="@(busy || string.IsNullOrWhiteSpace(text))">Check</button>
+            <button type="button" class="btn primary" @onclick="Import" disabled="@(busy || response is not { Ok: true, DryRun: true })">@(busy ? "Working..." : $"Import {lines.Count} asset{(lines.Count == 1 ? "" : "s")}")</button>
+        </div>
+    </div>
+</Modal>
+
+@code {
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback<string> OnDone { get; set; }
+
+    const string Template = "Tag,Category,Name,Serial,Value,PurchaseDate,Notes,Employee,IssueDate\nLAP-001,Laptop,Dell Latitude 5430,SN123456,3200,2026-01-15,,,\nPHN-001,Mobile phone,Samsung S24,SN654321,2800,2026-02-01,,EMP005,2026-02-03\n";
+
+    string text = "";
+    string? parseError;
+    List<ImportLine> lines = [];
+    ImportResponse? response;
+    bool busy;
+
+    Task Close() => OnClose.InvokeAsync();
+
+    void DownloadTemplate() => _ = Host.SaveText("asset-import-template.csv", Template);
+
+    async Task LoadFile(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            using var reader = new StreamReader(e.File.OpenReadStream(1024 * 1024));
+            text = await reader.ReadToEndAsync();
+            response = null; parseError = null;
+        }
+        catch (Exception ex) { parseError = "Couldn't read that file: " + ex.Message; }
+    }
+
+    async Task Check()
+    {
+        parseError = null; response = null;
+        lines = Parse(text, out parseError);
+        if (parseError is not null || lines.Count == 0) { if (parseError is null) parseError = "There are no rows to import."; return; }
+        busy = true;
+        response = await Portal.ImportAssets(lines, dryRun: true);
+        busy = false;
+    }
+
+    async Task Import()
+    {
+        busy = true;
+        var r = await Portal.ImportAssets(lines, dryRun: false);
+        busy = false;
+        response = r;
+        if (r.Ok && r.Imported > 0) await OnDone.InvokeAsync($"Imported {r.Imported} asset{(r.Imported == 1 ? "" : "s")}");
+    }
+
+    // ----- reading the pasted rows: tab, semicolon or comma separated, with quotes -----
+    static readonly Dictionary<string, string> Aliases = new()
+    {
+        ["tag"] = "tag", ["assetcode"] = "tag", ["assettag"] = "tag", ["code"] = "tag", ["assetno"] = "tag", ["assetnumber"] = "tag",
+        ["category"] = "category", ["type"] = "category", ["assettype"] = "category",
+        ["name"] = "name", ["model"] = "name", ["description"] = "name", ["item"] = "name", ["assetname"] = "name",
+        ["serial"] = "serial", ["serialno"] = "serial", ["serialnumber"] = "serial", ["sn"] = "serial", ["imei"] = "serial",
+        ["value"] = "value", ["cost"] = "value", ["price"] = "value", ["amount"] = "value",
+        ["purchasedate"] = "purchase", ["purchased"] = "purchase", ["bought"] = "purchase", ["dateofpurchase"] = "purchase",
+        ["notes"] = "notes", ["remarks"] = "notes", ["note"] = "notes",
+        ["employee"] = "emp", ["empcode"] = "emp", ["employeecode"] = "emp", ["assignedto"] = "emp", ["holder"] = "emp", ["issuedto"] = "emp",
+        ["issuedate"] = "issue", ["assigneddate"] = "issue", ["dateissued"] = "issue",
+    };
+
+    static List<ImportLine> Parse(string input, out string? error)
+    {
+        error = null;
+        var raw = input.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n').Where(l => !string.IsNullOrWhiteSpace(l)).ToList();
+        if (raw.Count < 2) { error = "Paste the column names on the first row and at least one asset below it."; return []; }
+        var delim = new[] { '\t', ';', ',' }.OrderByDescending(d => raw[0].Count(ch => ch == d)).First();
+        if (raw[0].Count(ch => ch == delim) == 0) { error = "Could not tell the columns apart. Use tabs (copy from Excel) or commas."; return []; }
+
+        var header = Split(raw[0], delim).Select(h => new string(h.ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray())).Select(h => Aliases.GetValueOrDefault(h, "")).ToList();
+        foreach (var need in new[] { "tag", "category", "name", "serial" })
+            if (!header.Contains(need)) { error = $"A column for '{need}' is missing. Check the first row."; return []; }
+
+        string? Cell(List<string> cells, string key) { var i = header.IndexOf(key); return i >= 0 && i < cells.Count && !string.IsNullOrWhiteSpace(cells[i]) ? cells[i].Trim() : null; }
+        DateTime? Date(string? s) => s is not null && DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.None, out var d) ? d : null;
+
+        var result = new List<ImportLine>();
+        foreach (var line in raw.Skip(1))
+        {
+            var c = Split(line, delim);
+            decimal? value = null;
+            if (Cell(c, "value") is { } v && decimal.TryParse(v.Replace(",", ""), NumberStyles.Any, CultureInfo.InvariantCulture, out var dv)) value = dv;
+            result.Add(new ImportLine(Cell(c, "tag"), Cell(c, "category"), Cell(c, "name"), Cell(c, "serial"), value, Date(Cell(c, "purchase")), Cell(c, "notes"), Cell(c, "emp"), Date(Cell(c, "issue"))));
+        }
+        return result;
+    }
+
+    static List<string> Split(string line, char delim)
+    {
+        var cells = new List<string>(); var sb = new System.Text.StringBuilder(); var quoted = false;
+        for (var i = 0; i < line.Length; i++)
+        {
+            var ch = line[i];
+            if (quoted) { if (ch == '"') { if (i + 1 < line.Length && line[i + 1] == '"') { sb.Append('"'); i++; } else quoted = false; } else sb.Append(ch); }
+            else if (ch == '"') quoted = true;
+            else if (ch == delim) { cells.Add(sb.ToString()); sb.Clear(); }
+            else sb.Append(ch);
+        }
+        cells.Add(sb.ToString());
+        return cells;
+    }
+}

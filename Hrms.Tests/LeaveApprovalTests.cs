@@ -92,6 +92,19 @@ public class LeaveApprovalTests(ApiFixture f)
     }
 
     [Fact]
+    public async Task The_approver_sees_facts_that_help_the_decision()
+    {
+        var emp = await f.LoginAs(f.Employee);
+        var mgr = await f.LoginAs(ApiFixture.Manager);
+        var (_, leave, _) = await Request(emp, ApiFixture.Manager, 19);
+        var row = (await mgr.Get("/api/admin/approvals")).Body.EnumerateArray().First(x => x.GetProperty("id").GetInt64() == leave!.Id);
+        var facts = row.GetProperty("facts").EnumerateArray().Select(x => x.GetString()!).ToList();
+        Assert.Contains(facts, x => x.Contains("days of notice"));                       // requested far ahead
+        Assert.Contains(facts, x => x.Contains("on leave on these dates"));              // who else is away (nobody, in the far-future slot)
+        await emp.Delete($"/api/me/leave/{leave!.Id}");
+    }
+
+    [Fact]
     public async Task The_employee_can_cancel_a_pending_request()
     {
         var emp = await f.LoginAs(f.Employee);

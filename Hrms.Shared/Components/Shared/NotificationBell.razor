@@ -7,15 +7,21 @@
     <button class="icon-btn" type="button" aria-label="Notifications" @onclick="Toggle">
         <Icon Name="bell" />@if (unread > 0) { <span class="dot">@(unread > 9 ? "9+" : unread.ToString())</span> }
     </button>
+    @if (arrived is not null)
+    {
+        <div class="notif-toast" role="status" @onclick="() => OpenArrived()"><b><i class="new-pill">NEW</i> @arrived.Title@if (LiveUpdates.Outcome(arrived) is { } o) { <em class="badge @o.Css">@o.Label</em> }</b>@if (!string.IsNullOrEmpty(arrived.Body)) { <span>@arrived.Body</span> }</div>
+    }
     @if (open)
     {
+        <div class="notif-back" @onclick="() => open = false"></div>
         <div class="notif-panel">
-            <div class="notif-head"><strong>Notifications</strong>@if (unread > 0) { <button type="button" class="link plain" @onclick="ReadAll">Mark all read</button> }</div>
+            <div class="notif-head"><strong>Notifications</strong><span class="notif-actions">@if (unread > 0) { <button type="button" class="link plain" @onclick="ReadAll">Mark all read</button> }@if (items.Count > 0) { <button type="button" class="link plain" @onclick="Clear">Clear all</button> }<button type="button" class="notif-x" aria-label="Close" @onclick="() => open = false">&times;</button></span></div>
             <ul>
                 @foreach (var n in items)
                 {
                     <li class="@(n.ReadAt is null ? "unread" : "")" @onclick="() => Open(n)">
-                        <b>@n.Title</b>
+                        <button type="button" class="notif-x row" aria-label="Remove this notification" @onclick="() => Dismiss(n)" @onclick:stopPropagation="true">&times;</button>
+                        <b>@n.Title@if (n.ReadAt is null) { <i class="new-pill">NEW</i> }@if (LiveUpdates.Outcome(n) is { } o) { <em class="badge @o.Css">@o.Label</em> }</b>
                         @if (!string.IsNullOrEmpty(n.Body)) { <span>@n.Body</span> }
                         <small>@Ago(n.CreatedAt)</small>
                     </li>
@@ -31,6 +37,9 @@
     int unread;
     bool open;
     PeriodicTimer? timer;
+    long lastSeen = -1;
+    NotificationItem? arrived;
+    CancellationTokenSource? hide;
 
     protected override async Task OnInitializedAsync()
     {
@@ -40,7 +49,7 @@
 
     async Task Poll()
     {
-        timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+        timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
         try { while (await timer.WaitForNextTickAsync()) { await Refresh(); await InvokeAsync(StateHasChanged); } }
         catch (ObjectDisposedException) { }
     }
@@ -48,8 +57,28 @@
     async Task Refresh()
     {
         if (!Auth.IsSignedIn || Auth.User!.MustChange) return;
-        try { var r = await Portal.Notifications(); if (r is not null) { items = r.Items; unread = r.Unread; } } catch { }
+        try
+        {
+            var r = await Portal.Notifications();
+            if (r is null) return;
+            items = r.Items; unread = r.Unread;
+            // anything newer than what this screen has already seen is news: show it and tell the open page (first load only sets the mark)
+            var fresh = lastSeen < 0 ? [] : r.Items.Where(n => n.Id > lastSeen && n.ReadAt is null).OrderBy(n => n.Id).ToList();
+            if (r.Items.Count > 0) lastSeen = Math.Max(lastSeen, r.Items.Max(n => n.Id)); else if (lastSeen < 0) lastSeen = 0;
+            foreach (var n in fresh) LiveUpdates.Raise(n);
+            if (fresh.Count > 0) _ = ShowArrived(fresh[^1]);
+        }
+        catch { }
     }
+
+    async Task ShowArrived(NotificationItem n)
+    {
+        hide?.Cancel(); hide = new CancellationTokenSource(); var token = hide.Token;
+        arrived = n; await InvokeAsync(StateHasChanged);
+        try { await Task.Delay(7000, token); arrived = null; await InvokeAsync(StateHasChanged); } catch (TaskCanceledException) { }
+    }
+
+    async Task OpenArrived() { var n = arrived; arrived = null; if (n is not null) await Open(n); }
 
     async Task Toggle() { open = !open; if (open) await Refresh(); }
 
@@ -60,6 +89,14 @@
         if (!string.IsNullOrEmpty(n.Link)) Nav.NavigateTo(n.Link);
     }
 
+    async Task Dismiss(NotificationItem n)
+    {
+        items.Remove(n); if (n.ReadAt is null) unread = Math.Max(0, unread - 1);
+        try { await Portal.DismissNotification(n.Id); } catch { }
+    }
+
+    async Task Clear() { items = []; unread = 0; try { await Portal.ClearNotifications(); } catch { } }
+
     async Task ReadAll() { await Portal.ReadAllNotifications(); await Refresh(); }
 
     static string Ago(DateTime t)
@@ -68,5 +105,5 @@
         return m < 1 ? "just now" : m < 60 ? m + " min ago" : m < 1440 ? m / 60 + " h ago" : t.ToString("d MMM HH:mm");
     }
 
-    public void Dispose() => timer?.Dispose();
+    public void Dispose() { timer?.Dispose(); hide?.Cancel(); }
 }

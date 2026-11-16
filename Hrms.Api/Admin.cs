@@ -18,7 +18,7 @@ public record MenuDto(string Id, string Name, string Route, string Icon, int Seq
 public record MenuInput(string Name, string Route, string Icon, int Sequence, bool Active);
 public record Plain(string Id, string Name);
 public record DecisionInput(string? To, string? Note);
-public class ApprovalRow : LeaveRow { public int FromLevel { get; set; } public string? FromUser { get; set; } public string? Note { get; set; } }
+public class ApprovalRow : LeaveRow { public int FromLevel { get; set; } public string? FromUser { get; set; } public string? Note { get; set; } public List<string> Facts { get; set; } = []; }
 
 public static class Admin
 {
@@ -235,7 +235,7 @@ SELECT l.Id AS Id, l.EmpCode, e.Empname AS Name, l.LeaveType, l.FromDate, l.ToDa
 FROM inter01.EMPLOYEELEAVEDETAILS l JOIN inter01.EmployeeMaster e ON e.EmpCode = l.EmpCode
 WHERE l.Userid = @me AND ISNULL(l.Deleteflag,0) = 0 AND ISNULL(l.Userlevel,0) < ISNULL(l.documentlevel,0)
 ORDER BY l.Applieddate, l.FromDate", new { me = Caller(ctx).UserId })).ToList();
-            foreach (var l in rows) l.LeaveName = LeaveTypes.Name(l.LeaveType);
+            foreach (var l in rows) { l.LeaveName = LeaveTypes.Name(l.LeaveType); l.Facts = await Workflow.Facts(c, l); }
             return rows;
         });
 
