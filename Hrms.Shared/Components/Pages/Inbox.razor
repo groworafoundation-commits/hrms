@@ -12,6 +12,7 @@
 <nav class="subnav">
     <button type="button" class="subnav-item @(tab == "all" ? "active" : "")" @onclick='() => tab = "all"'>All (@Total)</button>
     @if (canLeave) { <button type="button" class="subnav-item @(tab == "leave" ? "active" : "")" @onclick='() => tab = "leave"'>Leave (@leave.Count)</button> }
+    @if (canLeave) { <button type="button" class="subnav-item @(tab == "req" ? "active" : "")" @onclick='() => tab = "req"'>Requests (@reqs.Count)</button> }
     @if (canAtt) { <button type="button" class="subnav-item @(tab == "att" ? "active" : "")" @onclick='() => tab = "att"'>Attendance (@fixes.Count)</button> }
     @if (canAssets) { <button type="button" class="subnav-item @(tab == "assets" ? "active" : "")" @onclick='() => tab = "assets"'>Assets (@assetItems.Count)</button> }
 </nav>
@@ -29,6 +30,18 @@
                 @if (l.FromUser is not null || !string.IsNullOrEmpty(l.Note)) { <p class="muted note">From @(l.FromUser is null ? "-" : Fmt.Title(l.FromUser))@if (!string.IsNullOrEmpty(l.Note)) { <text>: "@l.Note"</text> }</p> }
                 @if (l.Facts.Count > 0) { <ul class="facts-list">@foreach (var f in l.Facts) { <li>@f</li> }</ul> }
                 <div class="inbox-actions"><button type="button" class="btn primary" @onclick="() => reviewLeave = l">Review</button></div>
+            </article>
+        }
+        @foreach (var q in reqs.Where(_ => tab is "all" or "req"))
+        {
+            <article class="inbox-card">
+                <div class="who"><Avatar Name="@(q.Name ?? q.EmpCode)" Size="42" />
+                    <div class="grow"><strong>@(Nice(q.Name ?? q.EmpCode))</strong><small>@q.EmpCode | requested @Fmt.Date(q.CreatedAt)</small></div>
+                    <span class="chip-kind leave">@q.TypeName</span>
+                </div>
+                <div class="inbox-what"><b>@q.TypeName</b> <span>@ReqWhen(q)</span></div>
+                @if (!string.IsNullOrEmpty(q.Reason)) { <p class="muted note">"@q.Reason"</p> }
+                <div class="inbox-actions"><button type="button" class="btn primary" @onclick="() => reviewReq = q">Review</button></div>
             </article>
         }
         @foreach (var f in fixes.Where(_ => tab is "all" or "att").OrderBy(x => x.RequestedAt))
@@ -63,6 +76,11 @@
     </div>
 </State>
 
+@if (reviewReq is not null)
+{
+    <RequestReviewModal Row="reviewReq" OnClose="CloseReq" OnDone="ReqDone" />
+}
+
 @if (reviewLeave is not null)
 {
     <LeaveReviewModal Row="reviewLeave" OnClose="CloseLeave" OnDone="LeaveDone" />
@@ -93,6 +111,8 @@
     List<ApprovalRow> leave = [];
     List<FixRequest> fixes = [];
     ApprovalRow? reviewLeave;
+    List<RequestRow> reqs = [];
+    RequestRow? reviewReq;
     FixRequest? rejecting;
     List<AssetWaiting> assetItems = [];
     AssetWaiting? deciding;
@@ -104,7 +124,14 @@
     bool canLeave => Auth.Can("H201");
     bool canAtt => Auth.Can("H206");
     bool canAssets => Auth.Can("H301");
-    int Total => leave.Count + fixes.Count + assetItems.Count;
+    int Total => leave.Count + reqs.Count + fixes.Count + assetItems.Count;
+    static string Nice(string s) => s == s.ToUpperInvariant() || s == s.ToLowerInvariant() ? Fmt.Title(s) : s;
+    static string ReqWhen(RequestRow q)
+    {
+        var d = q.FromDate.Date == q.ToDate.Date ? Fmt.Date(q.FromDate) : $"{Fmt.Date(q.FromDate)} - {Fmt.Date(q.ToDate)}";
+        var t = q.FromTime is { } a && q.ToTime is { } b ? $", {a:hh\\:mm} - {b:hh\\:mm}" : "";
+        return q.Type == "SB" ? d + t : $"{d}{t} | {q.Days:0.#} day{(q.Days == 1 ? "" : "s")}";
+    }
 
     protected override Task OnInitializedAsync() => Load();
 
@@ -114,6 +141,7 @@
         try
         {
             leave = canLeave ? await Portal.Approvals() ?? [] : [];
+            try { reqs = canLeave ? await Portal.PendingRequests() ?? [] : []; } catch { reqs = []; }
             fixes = canAtt ? await AttApi.Requests("Pending") ?? [] : [];
             assetItems = canAssets ? (await Portal.AssetWaitingList() ?? []).Where(w => w.CanDecide).ToList() : [];
         }
@@ -127,6 +155,8 @@
     async Task AssetDone(string message) { deciding = null; await Load(); await Toast(message); }
 
     Task CloseLeave() { reviewLeave = null; return Task.CompletedTask; }
+    Task CloseReq() { reviewReq = null; return Task.CompletedTask; }
+    async Task ReqDone(string message) { reviewReq = null; await Load(); await Toast(message); }
 
     async Task LeaveDone(string message) { reviewLeave = null; await Load(); await Toast(message); }
 

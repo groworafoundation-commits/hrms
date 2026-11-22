@@ -5,99 +5,302 @@
 
 <PageTitle>My leave</PageTitle>
 
-<section class="greeting">
-    <div><h1>My leave</h1><p>Request leave and follow its approval.</p></div>
-    <div class="page-actions">
-        @if (Auth.HasMenu("H103")) { <a class="btn ghost" href="my/calendar">Calendar view</a> }
-        @if (Auth.CanAdd("H102")) { <button type="button" class="btn primary" @onclick="() => showForm = true"><Icon Name="plus" Size="16" /> Request leave</button> }
+<section class="card rq-head">
+    <div class="rq-head-text">
+        <span class="rq-tag">SELF SERVICE</span>
+        <h1>Leave Requests &amp; Applications</h1>
+        <p>Apply, track and manage your leave, on duty, work from home, short break and comp off requests.</p>
+    </div>
+    <div class="rq-head-tools">
+        <div class="rq-month">
+            <button type="button" class="rq-circle" aria-label="Earlier month" @onclick="() => StepMonth(-1)"><span class="flip"><Icon Name="chevron-right" Size="16" /></span></button>
+            <div class="rq-month-wrap">
+                <button type="button" class="rq-month-label" @onclick="() => monthMenu = !monthMenu"><Icon Name="calendar" Size="14" /> <span>@(month is null ? "All months" : MonthName(month))</span> <Icon Name="chevron-down" Size="12" /></button>
+                @if (monthMenu)
+                {
+                    <div class="rq-back" @onclick="() => monthMenu = false"></div>
+                    <ul class="rq-month-menu">
+                        <li class="@(month is null ? "on" : "")" @onclick='() => PickMonth(null)'>All months (full history)</li>
+                        @foreach (var m in MonthChoices) { var pick = m; <li class="@(month == m ? "on" : "")" @onclick="() => PickMonth(pick)">@MonthName(m)</li> }
+                    </ul>
+                }
+            </div>
+            <button type="button" class="rq-circle" aria-label="Later month" @onclick="() => StepMonth(1)"><Icon Name="chevron-right" Size="16" /></button>
+        </div>
+        @if (Auth.HasMenu("H103")) { <a class="rq-ghost" href="my/calendar"><Icon Name="calendar-check" Size="15" /> Calendar view</a> }
+        @if (Auth.CanAdd("H102")) { <button type="button" class="rq-apply" @onclick="() => showForm = !showForm"><span class="rq-plus"><Icon Name="plus" Size="14" /></span> Apply Request</button> }
     </div>
 </section>
+
+@if (showForm)
+{
+    <div class="rq-formbar">
+        <div class="rq-seg">
+            @foreach (var (key, label, icon) in FormTabs) { var k = key; <button type="button" class="@(formKind == k ? "on" : "")" @onclick="() => formKind = k"><Icon Name="@icon" Size="15" /> @label</button> }
+        </div>
+        <button type="button" class="rq-closeform" @onclick="() => showForm = false"><Icon Name="x" Size="13" /> Close Form</button>
+    </div>
+    @if (formKind == "leave") { <LeaveRequestForm OnSaved="Saved" OnNote="Note" OnCancel="() => showForm = false" /> }
+    else { <RequestForm @key="formKind" Kind="@formKind" OnSaved="Saved" OnNote="Note" OnCancel="() => showForm = false" /> }
+}
 
 <State Loading="@loading" Error="@error" OnRetry="@(() => Load())">
     @if (me is not null)
     {
-        @if (balance is { HasPayroll: true })
-        {
-            <div class="typecards bal">
-                <div class="typecard static hero"><small>Annual leave available</small><strong class="@(balance.Available < 0 ? "neg" : "")">@balance.Available.ToString("0.##") days</strong><span>@(balance.Available < 0 ? "taken in advance" : "ready to use")</span></div>
-                <div class="typecard static"><small>Brought forward</small><strong>@balance.BroughtForward.ToString("0.##")</strong><span>from last year</span></div>
-                <div class="typecard static"><small>Earned in @balance.Year</small><strong>@balance.Earned.ToString("0.##")</strong><span>2.5 days a month</span></div>
-                <div class="typecard static"><small>Used</small><strong>@(balance.Used + balance.Unprocessed + balance.Pending)</strong><span>@balance.Pending.ToString("0.##") waiting approval</span></div>
+        <section class="rq-stats">
+            <button type="button" class="rq-stat total @(status == "" ? "active" : "")" @onclick='() => SetStatus("")'>
+                <div><small>Total Requests</small><strong>@inMonth.Count</strong></div><span class="rq-stat-ico"><span class="plane"><Icon Name="arrow-right" Size="20" /></span></span></button>
+            <button type="button" class="rq-stat pend @(status == "Pending" ? "active" : "")" @onclick='() => SetStatus("Pending")'>
+                <div><small>Pending Approvals</small><strong>@NumberOf("Pending")</strong></div><span class="rq-stat-ico"><Icon Name="clock" Size="20" /></span></button>
+            <button type="button" class="rq-stat appr @(status == "Approved" ? "active" : "")" @onclick='() => SetStatus("Approved")'>
+                <div><small>Approved</small><strong>@NumberOf("Approved")</strong></div><span class="rq-stat-ico"><Icon Name="check" Size="20" /></span></button>
+            <button type="button" class="rq-stat rej @(status == "Rejected" ? "active" : "")" @onclick='() => SetStatus("Rejected")'>
+                <div><small>Rejected</small><strong>@NumberOf("Rejected")</strong></div><span class="rq-stat-ico"><Icon Name="x" Size="20" /></span></button>
+        </section>
+
+        <section class="card rq-bar">
+            <div class="rq-tabs">
+                @foreach (var (key, label, icon) in CatTabs)
+                {
+                    var k = key;
+                    <button type="button" class="rq-tab @(tab == k ? "on" : "")" @onclick="() => SetTab(k)"><Icon Name="@icon" Size="14" /> @label <i>@CountCat(k)</i></button>
+                }
             </div>
-            <p class="muted note">Balance to @(balance.AsOfMonth is null ? "" : Fmt.MonthLabel(balance.AsOfMonth)) comes from payroll. Leave taken since, and requests still waiting, are already taken off. Leave with salary is the type that uses this balance.</p>
-        }
-        <div class="typecards">
-            @foreach (var t in me.Taken)
-            {
-                <div class="typecard static"><small>@t.TypeName</small><strong>@t.Days.ToString("0.#") days</strong><span>@t.Records records in @me.Year</span></div>
-            }
-            <div class="typecard static"><small>Waiting for approval</small><strong>@me.Pending</strong><span>requests</span></div>
-        </div>
+            <div class="rq-find">
+                <label class="rq-status"><span>Status:</span>
+                    <select value="@status" @onchange='e => SetStatus(e.Value?.ToString() ?? "")'>
+                        <option value="">All Statuses (@inMonth.Count)</option>
+                        <option value="Pending">Pending Approvals (@NumberOf("Pending"))</option>
+                        <option value="Approved">Approved (@NumberOf("Approved"))</option>
+                        <option value="Rejected">Rejected (@NumberOf("Rejected"))</option>
+                    </select></label>
+                <label class="rq-search"><Icon Name="search" Size="14" /><input type="text" placeholder="Search by ID, type, approver..." value="@search" @oninput='e => { search = e.Value?.ToString() ?? ""; page = 1; }' /></label>
+            </div>
+        </section>
 
-        @if (decisions.Count > 0)
-        {
-            <section class="card decisions">
-                <h3>Latest updates on your requests</h3>
-                <ul>
-                    @foreach (var n in decisions)
-                    {
-                        var o = LiveUpdates.Outcome(n)!.Value;
-                        <li><em class="badge @o.Css">@o.Label</em> @if (n.ReadAt is null) { <i class="new-pill">NEW</i> } <b>@n.Title</b><span>@n.Body</span><small>@n.CreatedAt.ToString("d MMM HH:mm")</small></li>
-                    }
-                </ul>
-            </section>
-        }
-
-        <section class="card">
-            <table class="tbl rows">
-                <thead><tr><th>Leave type</th><th>Dates</th><th class="r">Days</th><th class="hide-sm">Requested</th><th>Status</th><th></th></tr></thead>
+        <section class="card rq-table">
+            <table>
+                <thead><tr><th class="c-sno">S.No</th><th>Request type</th><th class="c-ref">Reference ID</th><th>Leave / requested date</th><th class="c-lvl">Approval level</th><th class="c-app">Current approver</th><th>Status</th><th class="r">Action</th></tr></thead>
                 <tbody>
-                    @foreach (var l in rows)
+                    @foreach (var (l, idx) in PageRows.Select((x, i) => (x, i)))
                     {
                         <tr>
-                            <td>@l.LeaveName</td>
-                            <td>@Fmt.Range(l.FromDate, l.ToDate)</td>
-                            <td class="r">@l.Days.ToString("0.#")</td>
-                            <td class="hide-sm">@Fmt.Date(l.Applied)</td>
-                            <td><StatusBadge Status="@l.Status" />@if (l.Status == "Pending" && !string.IsNullOrEmpty(l.HeldByName)) { <small class="muted"> with @Fmt.Title(l.HeldByName)</small> }</td>
-                            <td class="r">@if (l.Status == "Pending" && Auth.CanDelete("H102")) { <button type="button" class="btn ghost sm" @onclick="() => { cancelling = l; cancelError = null; }">Cancel request</button> }</td>
+                            <td class="c-sno">@(First + idx + 1)</td>
+                            <td>
+                                <div class="rq-type"><span class="rq-ico"><Icon Name="@l.Icon" Size="17" /></span>
+                                    <div><b>@l.Name</b><span class="rq-sub">@l.Length</span></div></div>
+                            </td>
+                            <td class="c-ref"><span class="rq-ref">#@l.Ref</span></td>
+                            <td><div class="rq-when"><b><Icon Name="calendar" Size="13" /> @l.When</b><span class="rq-sub">Applied: @Fmt.Date(l.Applied)</span></div></td>
+                            <td class="c-lvl">@if (l.FinalLevel > 0) { <span class="rq-lvl"><Icon Name="grid" Size="12" /> Level @l.Level / @l.FinalLevel</span> } else { <span class="muted">-</span> }</td>
+                            <td class="c-app">
+                                @if (l.Status != "Rejected" && !string.IsNullOrEmpty(l.HeldByName))
+                                {
+                                    <div class="rq-who"><Avatar Name="@l.HeldByName" Size="30" /><div><b>@Nice(l.HeldByName)</b>@if (!string.IsNullOrEmpty(l.HeldByRole)) { <span class="rq-sub">@l.HeldByRole</span> }</div></div>
+                                }
+                                else { <span class="muted">-</span> }
+                            </td>
+                            <td>
+                                <span class="rq-badge @l.Status.ToLowerInvariant()"><Icon Name="@(l.Status == "Approved" ? "check" : l.Status == "Rejected" ? "x" : "clock")" Size="12" /> @l.Status</span>
+                                @if (l.Status == "Rejected" && !string.IsNullOrEmpty(l.RejectReason)) { <span class="rq-sub rq-why">Reason: @l.RejectReason</span> }
+                            </td>
+                            <td class="r"><div class="rq-actions">
+                                @if (l.Status == "Pending" && Auth.CanDelete("H102")) { <button type="button" class="rq-pill danger" @onclick="() => { cancelling = l; cancelError = null; }">Cancel</button> }
+                                <button type="button" class="rq-pill dark" @onclick="() => Open(l)"><Icon Name="eye" Size="13" /> View</button>
+                            </div></td>
                         </tr>
                     }
-                    @if (rows.Count == 0) { <tr><td colspan="6" class="empty-row">No leave found.</td></tr> }
+                    @if (Shown.Count == 0)
+                    {
+                        <tr class="rq-none"><td colspan="8">
+                            <div class="rq-empty"><span class="rq-folder"><Icon Name="file" Size="30" /></span><b>No Requests Found</b>
+                                <span>@EmptyText</span>
+                                @if (items.Count > 0 && (month is not null || tab != "" || status != "" || search != "")) { <button type="button" class="rq-pill wide" @onclick="ClearFilters"><Icon Name="calendar" Size="13" /> View All Months (Full History)</button> }
+                            </div></td></tr>
+                    }
                 </tbody>
             </table>
+            <div class="rq-pager">
+                <label class="rq-per"><span>Items per page:</span>
+                    <select value="@pageSize" @onchange='e => { pageSize = int.Parse(e.Value?.ToString() ?? "10"); page = 1; }'>
+                        <option value="10">10</option><option value="25">25</option><option value="50">50</option>
+                    </select></label>
+                <span class="rq-count">@(Shown.Count == 0 ? "No entries" : $"Showing {First + 1} - {Math.Min(First + pageSize, Shown.Count)} of {Shown.Count} entries")</span>
+                <div class="rq-pg">
+                    <button type="button" aria-label="First page" disabled="@(page <= 1)" @onclick="() => page = 1">&laquo;</button>
+                    <button type="button" aria-label="Previous page" disabled="@(page <= 1)" @onclick="() => page--">&lsaquo;</button>
+                    <span class="rq-pageof">Page @Math.Min(page, Pages) of @Pages</span>
+                    <button type="button" aria-label="Next page" disabled="@(page >= Pages)" @onclick="() => page++">&rsaquo;</button>
+                    <button type="button" aria-label="Last page" disabled="@(page >= Pages)" @onclick="() => page = Pages">&raquo;</button>
+                </div>
+            </div>
+        </section>
+
+        <section class="rq-more">
+            <h3 class="rq-morehead">Leave balance &amp; updates</h3>
+            @if (balance is { HasPayroll: true })
+            {
+                <div class="typecards bal">
+                    <div class="typecard static hero"><small>Annual leave available</small><strong class="@(balance.Available < 0 ? "neg" : "")">@balance.Available.ToString("0.##") days</strong><span>@(balance.Available < 0 ? "taken in advance" : "ready to use")</span></div>
+                    <div class="typecard static"><small>Brought forward</small><strong>@balance.BroughtForward.ToString("0.##")</strong><span>from last year</span></div>
+                    <div class="typecard static"><small>Earned in @balance.Year</small><strong>@balance.Earned.ToString("0.##")</strong><span>2.5 days a month</span></div>
+                    <div class="typecard static"><small>Used</small><strong>@(balance.Used + balance.Unprocessed + balance.Pending)</strong><span>@balance.Pending.ToString("0.##") waiting approval</span></div>
+                </div>
+                <p class="muted note">Balance to @(balance.AsOfMonth is null ? "" : Fmt.MonthLabel(balance.AsOfMonth)) comes from payroll. Leave taken since, and requests still waiting, are already taken off. Leave with salary is the type that uses this balance.</p>
+            }
+            <div class="typecards">
+                @foreach (var t in me.Taken)
+                {
+                    <div class="typecard static"><small>@t.TypeName</small><strong>@t.Days.ToString("0.#") days</strong><span>@t.Records records in @me.Year</span></div>
+                }
+                <div class="typecard static"><small>Waiting for approval</small><strong>@me.Pending</strong><span>requests</span></div>
+                @if (comp is not null && (comp.Available > 0 || comp.Credits.Count > 0))
+                {
+                    <div class="typecard static"><small>Comp off available</small><strong>@((comp.Available - comp.Pending).ToString("0.##")) days</strong><span>credits last @comp.ValidDays days</span></div>
+                }
+            </div>
+
+            @if (decisions.Count > 0)
+            {
+                <section class="card decisions">
+                    <h3>Latest updates on your requests</h3>
+                    <ul>
+                        @foreach (var n in decisions)
+                        {
+                            var o = LiveUpdates.Outcome(n)!.Value;
+                            <li><em class="badge @o.Css">@o.Label</em> @if (n.ReadAt is null) { <i class="new-pill">NEW</i> } <b>@n.Title</b><span>@n.Body</span><small>@n.CreatedAt.ToString("d MMM HH:mm")</small></li>
+                        }
+                    </ul>
+                </section>
+            }
         </section>
     }
 </State>
 
-@if (showForm)
+@if (viewing is not null)
 {
-    <Modal Title="Request leave" OnClose="() => showForm = false">
-        <LeaveRequestForm OnSaved="Saved" OnCancel="() => showForm = false" />
-    </Modal>
+    <div class="rq-modal-back" @onclick="() => viewing = null">
+        <div class="rq-modal" @onclick:stopPropagation role="dialog" aria-label="Approval status">
+            <header class="rq-mhead">
+                <span class="rq-mico"><Icon Name="users" Size="18" /></span>
+                <div><b>Approval Status</b><small>Ref: #@viewing.Ref &bull; @viewing.Cat Request</small></div>
+                <button type="button" class="rq-mx" aria-label="Close" @onclick="() => viewing = null"><Icon Name="x" Size="18" /></button>
+            </header>
+            <div class="rq-mbody">
+                <section class="rq-mcard">
+                    <div class="rq-mtop"><b>@viewing.Name</b><span class="rq-daychip">@viewing.Length</span><span class="grow"></span>
+                        <span class="rq-badge @viewing.Status.ToLowerInvariant()">@viewing.Status</span></div>
+                    <dl class="rq-dl">
+                        <div><dt><Icon Name="user" Size="14" /> Submitted By:</dt><dd>@Nice(Auth.User!.FullName)</dd></div>
+                        <div><dt><Icon Name="calendar" Size="14" /> Requested Date:</dt><dd>@viewing.When</dd></div>
+                        <div><dt><Icon Name="calendar-check" Size="14" /> Applied On:</dt><dd class="soft">@Fmt.Date(viewing.Applied)</dd></div>
+                        @if (trail is { FinalLevel: > 0 } && viewing.Status != "Rejected")
+                        {
+                            <div><dt><Icon Name="shield" Size="14" /> Final approval:</dt><dd>@(trail.FinalApprovers.Count == 0 ? "Not set" : string.Join(", ", trail.FinalApprovers.Take(3).Select(Nice)))<span class="rq-approver">Level @trail.FinalLevel</span></dd></div>
+                        }
+                        <div><dt><Icon Name="user-search" Size="14" /> Status / Approver:</dt><dd>@(viewing.Status != "Rejected" && !string.IsNullOrEmpty(viewing.HeldByName) ? Nice(viewing.HeldByName) : "-")@if (viewing.Status != "Rejected" && !string.IsNullOrEmpty(viewing.HeldByName)) { <span class="rq-approver">Approver</span> }</dd></div>
+                    </dl>
+                </section>
+                @if (!string.IsNullOrEmpty(viewing.Reason))
+                {
+                    <section class="rq-mcard"><small class="rq-cap"><Icon Name="megaphone" Size="13" /> Reason:</small><p class="rq-quote">"@viewing.Reason"</p></section>
+                }
+                @if (!string.IsNullOrEmpty(viewing.Remarks))
+                {
+                    <section class="rq-mcard"><small class="rq-cap"><Icon Name="file" Size="13" /> Additional remarks:</small><p class="rq-quote">"@viewing.Remarks"</p></section>
+                }
+                @if (!string.IsNullOrEmpty(viewing.RejectReason))
+                {
+                    <section class="rq-mcard rej"><small class="rq-cap"><Icon Name="x" Size="13" /> Rejected because:</small><p class="rq-quote">"@viewing.RejectReason"</p></section>
+                }
+                <section class="rq-mcard">
+                    <small class="rq-cap"><Icon Name="file" Size="13" /> Supporting documents:</small>
+                    <AttachmentList @ref="docs" OwnerType="@viewing.OwnerType" OwnerKey="@viewing.Ref" CanEdit="@(viewing.Status == "Pending" && Auth.CanAdd("H102"))" ShowEmpty="true" />
+                    @if (viewing.Status == "Pending" && Auth.CanAdd("H102"))
+                    {
+                        <AttachmentPicker @ref="morePicker" />
+                        <div class="rq-actions"><button type="button" class="rq-pill dark" @onclick="AddMore" disabled="@addBusy"><Icon Name="plus" Size="13" /> @(addBusy ? "Uploading..." : "Attach to this request")</button></div>
+                        @if (addError is not null) { <div class="form-error">@addError</div> }
+                    }
+                </section>
+                <section class="rq-mcard">
+                    <small class="rq-cap tl-cap"><Icon Name="users" Size="13" /> APPROVAL WORKFLOW TIMELINE</small>
+                    @if (steps is null) { <p class="muted">Loading...</p> }
+                    else if (Timeline.Count == 0) { <p class="muted">No steps recorded yet.</p> }
+                    else
+                    {
+                        <ol class="rq-tl">
+                            @foreach (var s in Timeline)
+                            {
+                                <li class="@s.Kind">
+                                    <span class="rq-tl-dot">@if (s.Kind == "rejected") { <Icon Name="x" Size="13" /> } else if (s.Kind == "pending") { <Icon Name="clock" Size="13" /> } else if (s.Kind == "upcoming" || s.Kind == "final") { <Icon Name="more" Size="13" /> } else { <Icon Name="check" Size="13" /> }</span>
+                                    <div class="rq-tl-body">
+                                        <div class="rq-tl-top">
+                                            <b>@Nice(s.Name)</b>
+                                            @if (!string.IsNullOrEmpty(s.Role)) { <span class="rq-role">@s.Role</span> }
+                                            @if (s.Level > 0) { <span class="rq-levelchip">Level @s.Level</span> }
+                                            <span class="grow"></span>
+                                            <span class="rq-badge @s.Kind">@s.Label</span>
+                                        </div>
+                                        @if (s.At is not null) { <small class="rq-tl-time"><Icon Name="clock" Size="11" /> @s.At.Value.ToString("dd MMM yyyy, hh:mm tt")</small> }
+                                        <p class="rq-tl-note">"@s.Note"</p>
+                                    </div>
+                                </li>
+                            }
+                        </ol>
+                    }
+                </section>
+            </div>
+            <footer class="rq-mfoot"><button type="button" class="rq-refresh" @onclick="() => Open(viewing)"><Icon Name="clock" Size="13" /> Refresh Status</button><button type="button" class="rq-pill close" @onclick="() => viewing = null">Close</button></footer>
+        </div>
+    </div>
 }
 @if (cancelling is not null)
 {
-    <ConfirmModal Title="Cancel request" ConfirmText="Cancel request" Message="@($"Cancel your {cancelling.LeaveName} request for {Fmt.Range(cancelling.FromDate, cancelling.ToDate)}?")" Busy="busy" Error="cancelError" OnConfirm="ConfirmCancel" OnCancel="() => cancelling = null" />
+    <ConfirmModal Title="Cancel request" ConfirmText="Cancel request" Message="@($"Cancel your {cancelling.Name} request for {cancelling.When}?")" Busy="busy" Error="cancelError" OnConfirm="ConfirmCancel" OnCancel="() => cancelling = null" />
 }
 @if (toast is not null) { <div class="toast">@toast</div> }
 
 @code {
+    sealed record Step(string Name, string? Role, int Level, DateTime? At, string Kind, string Label, string Note);
+
+    // one row of the list: an ERP leave request or one of the HRMS requests
+    sealed class Item
+    {
+        public string Key = ""; public string Kind = "leave"; public string Cat = "Leave"; public string Name = ""; public string Icon = "calendar-check"; public string Length = "";
+        public string Ref = ""; public string When = ""; public DateTime From, To; public DateTime? Applied; public string Status = ""; public string? HeldByName, HeldByRole;
+        public int Level, FinalLevel; public string? Reason, Remarks, RejectReason; public long Id;
+        public string OwnerType => Kind == "leave" ? "leave" : "request";
+    }
+
     MySummary? me;
     LeaveBalance? balance;
-    List<LeaveRow> rows = [];
+    CompOffBalance? comp;
+    List<Item> items = [];
     List<NotificationItem> decisions = [];
-    LeaveRow? cancelling;
-    bool loading = true, showForm, busy;
-    string? error, cancelError, toast;
+    Item? cancelling, viewing;
+    LeaveTimeline? trail;
+    List<LeaveStep>? steps => trail?.Steps;
+    AttachmentList? docs;
+    AttachmentPicker? morePicker;
+    bool loading = true, showForm, busy, monthMenu, addBusy;
+    string? error, cancelError, toast, addError;
+    string formKind = "leave";
+    // what the list shows: a month (or all), a kind of request, a status, a search, a page. It opens on this month, like the reference.
+    string? month = Ym(DateTime.Today);
+    string tab = "", status = "", search = "";
+    int page = 1, pageSize = 10;
+
+    static readonly (string Key, string Label, string Icon)[] FormTabs = [("leave", "Leaves", "sun"), ("OD", "On Duty", "briefcase"), ("WFH", "Work From Home", "home"), ("SB", "Short Break", "clock"), ("COMP", "Comp Off", "wallet")];
+    static readonly (string Key, string Label, string Icon)[] CatTabs = [("", "All Requests", "menu"), ("Leave", "Leave Requests", "sun"), ("Comp Off", "Comp Off", "wallet"), ("On Duty", "On Duty", "briefcase"), ("Short Break", "Short Break", "clock"), ("Work From Home", "Work From Home", "home")];
 
     protected override Task OnInitializedAsync() { LiveUpdates.Arrived += OnArrived; return Load(); }
 
     // an approval, rejection or hand-over of this person's request: reload quietly so the status changes on screen without a refresh
-    void OnArrived(NotificationItem n) { if (n.Kind == "leave") _ = InvokeAsync(async () => { await Load(silent: true); StateHasChanged(); }); }
+    void OnArrived(NotificationItem n) { if (n.Kind is "leave" or "request") _ = InvokeAsync(async () => { await Load(silent: true); if (viewing is not null) await Open(viewing); StateHasChanged(); }); }
     public void Dispose() => LiveUpdates.Arrived -= OnArrived;
 
-    async Task Toast(string message) { toast = message; StateHasChanged(); await Task.Delay(3500); toast = null; StateHasChanged(); }
+    async Task Toast(string message) { toast = message; StateHasChanged(); await Task.Delay(message.Length > 60 ? 6000 : 3500); toast = null; StateHasChanged(); }
 
     async Task Load(bool silent = false)
     {
@@ -107,19 +310,146 @@
         {
             me = await Portal.Me();
             try { balance = await Portal.MyBalance(); } catch { balance = null; }
+            try { comp = await Portal.CompOff(); } catch { comp = null; }
             try { decisions = (await Portal.Notifications())?.Items.Where(n => LiveUpdates.Outcome(n) is not null).Take(5).ToList() ?? []; } catch { decisions = []; }
-            rows = (await Portal.MyLeave(DateTime.Today.AddYears(-2), DateTime.Today.AddYears(1)) ?? []).OrderByDescending(l => l.FromDate).ToList();
+            var leave = await Portal.MyLeave(DateTime.Today.AddYears(-2), DateTime.Today.AddYears(1)) ?? [];
+            List<RequestRow> reqs; try { reqs = await Portal.MyRequests(DateTime.Today.AddYears(-2), DateTime.Today.AddYears(1)) ?? []; } catch { reqs = []; }
+            items = leave.Select(FromLeave).Concat(reqs.Select(FromRequest)).OrderByDescending(i => i.From).ThenByDescending(i => i.Applied).ToList();
         }
         catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
         loading = false;
     }
 
-    async Task Saved() { showForm = false; await Load(); _ = Toast("Leave request sent for approval"); }
+    static string Days(decimal d) => $"{d:0.#} {(d == 1 ? "Day" : "Days")}";
+    static string Range(DateTime a, DateTime b) => (a.Date == b.Date ? $"{Fmt.Short(a)}" : $"{Fmt.Short(a)} - {Fmt.Short(b)}") + $", {b.Year}";
+
+    static Item FromLeave(LeaveRow l) => new()
+    {
+        Key = "L" + l.Id, Kind = "leave", Cat = "Leave", Name = l.LeaveName, Icon = IconForLeave(l.LeaveName), Length = Days(l.Days), Ref = string.IsNullOrEmpty(l.TransNo) ? Math.Abs(l.Id).ToString() : l.TransNo,
+        When = Range(l.FromDate, l.ToDate), From = l.FromDate, To = l.ToDate, Applied = l.Applied, Status = l.Status, HeldByName = l.HeldByName, HeldByRole = l.HeldByRole, Level = l.Level, FinalLevel = l.FinalLevel,
+        Reason = l.Reason, Remarks = l.Remarks, RejectReason = l.RejectReason, Id = l.Id,
+    };
+
+    static Item FromRequest(RequestRow r)
+    {
+        var cat = r.Type switch { "OD" => "On Duty", "WFH" => "Work From Home", "SB" => "Short Break", _ => "Comp Off" };
+        var times = r.FromTime is { } a && r.ToTime is { } b ? $", {a:hh\\:mm} - {b:hh\\:mm}" : "";
+        var len = r.Type == "SB" && r.Minutes is { } m ? (m >= 60 ? $"{m / 60} h {m % 60} min" : $"{m} min") : Days(r.Days);
+        return new()
+        {
+            Key = "R" + r.Id, Kind = r.Type, Cat = cat, Name = r.TypeName, Icon = cat switch { "On Duty" => "briefcase", "Work From Home" => "home", "Short Break" => "clock", _ => "wallet" }, Length = len,
+            Ref = r.TransNo, When = Range(r.FromDate, r.ToDate) + times, From = r.FromDate, To = r.ToDate, Applied = r.CreatedAt, Status = r.Status, HeldByName = r.HeldByName, HeldByRole = r.HeldByRole,
+            Level = r.Level, FinalLevel = r.FinalLevel, Reason = r.Reason, Remarks = r.Remarks, RejectReason = r.Status == "Rejected" ? r.DecisionNote : null, Id = r.Id,
+        };
+    }
+
+    // ----- the list as filtered -----
+    static string Ym(DateTime d) => d.ToString("yyyy-MM", System.Globalization.CultureInfo.InvariantCulture);
+    static string MonthName(string ym) => DateTime.ParseExact(ym + "-01", "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture).ToString("MMMM yyyy", System.Globalization.CultureInfo.InvariantCulture);
+    // names come from the user list with their own capitals; only shouting or all-lower-case ones are tidied
+    static string Nice(string s) => s == s.ToUpperInvariant() || s == s.ToLowerInvariant() ? Fmt.Title(s) : s;
+
+    IEnumerable<string> MonthChoices => items.SelectMany(r => new[] { Ym(r.From), Ym(r.To) }).Append(Ym(DateTime.Today)).Distinct().OrderByDescending(m => m).Take(24);
+
+    List<Item> inMonth => month is null ? items : items.Where(r => Ym(r.From).CompareTo(month) <= 0 && Ym(r.To).CompareTo(month) >= 0).ToList();
+    int NumberOf(string s) => inMonth.Count(r => r.Status == s);
+    int CountCat(string cat) => cat == "" ? inMonth.Count : inMonth.Count(r => r.Cat == cat);
+    int First => (Math.Min(page, Pages) - 1) * pageSize;
+
+    List<Item> Shown => inMonth
+        .Where(r => tab == "" || r.Cat == tab)
+        .Where(r => status == "" || r.Status == status)
+        .Where(r => string.IsNullOrWhiteSpace(search)
+            || r.Ref.Contains(search, StringComparison.OrdinalIgnoreCase) || r.Name.Contains(search, StringComparison.OrdinalIgnoreCase)
+            || (r.HeldByName ?? "").Contains(search, StringComparison.OrdinalIgnoreCase) || r.Status.Contains(search, StringComparison.OrdinalIgnoreCase)
+            || (r.Reason ?? "").Contains(search, StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    int Pages => Math.Max(1, (int)Math.Ceiling(Shown.Count / (double)pageSize));
+    IEnumerable<Item> PageRows => Shown.Skip((Math.Min(page, Pages) - 1) * pageSize).Take(pageSize);
+
+    string EmptyText => items.Count == 0 ? "You have not applied for anything yet."
+        : $"You do not have any applications{(tab != "" ? " under " + tab : "")}{(status != "" ? " that are " + status.ToLowerInvariant() : "")} for {(month is null ? "all months" : MonthName(month))}.";
+
+    void SetStatus(string s) { status = s; page = 1; }
+    void SetTab(string t) { tab = t; page = 1; }
+    void ClearFilters() { month = null; tab = ""; status = ""; search = ""; page = 1; }
+    void PickMonth(string? m) { month = m; monthMenu = false; page = 1; }
+    void StepMonth(int by)
+    {
+        var d = month is null ? DateTime.Today : DateTime.ParseExact(month + "-01", "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture).AddMonths(by);
+        month = Ym(d); page = 1;
+    }
+
+    static string IconForLeave(string leaveName)
+    {
+        var n = leaveName.ToLowerInvariant();
+        return n.Contains("emergency") ? "medical" : n.Contains("unpaid") ? "briefcase" : n.Contains("maternity") ? "users" : n.Contains("annual") ? "sun" : "calendar-check";
+    }
+
+    // ----- a request's details and its approval trail -----
+    async Task Open(Item l)
+    {
+        viewing = l; trail = null; addError = null;
+        try
+        {
+            trail = (l.Kind == "leave" ? await Portal.LeaveTimeline(l.Id) : await Portal.RequestTimeline((int)l.Id)) ?? new([], [], 0, []);
+        }
+        catch { trail = new([], [], 0, []); }
+        StateHasChanged();
+    }
+
+    // more documents for a request that is still waiting
+    async Task AddMore()
+    {
+        if (viewing is null || morePicker is null || morePicker.Count == 0) { addError = "Choose a document first."; return; }
+        addBusy = true; addError = null;
+        addError = await morePicker.UploadAll(viewing.OwnerType, viewing.Ref);
+        addBusy = false;
+        if (docs is not null) await docs.Reload();
+        if (addError is null) await Open(viewing);
+    }
+
+    // The log has a row each time the request lands with someone and another when they act on it. Show who submitted it, each decision, who it is waiting on and who is still to come.
+    List<Step> Timeline
+    {
+        get
+        {
+            var list = new List<Step>();
+            if (steps is null || viewing is null) return list;
+            for (var i = 0; i < steps.Count; i++)
+            {
+                var s = steps[i];
+                var note = s.Note?.Trim();
+                if (i == 0) { list.Add(new(s.Name, s.RoleName, 0, s.At, "submitted", "Submitted", string.IsNullOrEmpty(note) ? "Request submitted" : note)); continue; }
+                var acted = steps.Skip(i + 1).Any(x => string.Equals(x.UserId, s.UserId, StringComparison.OrdinalIgnoreCase));
+                var rejected = note is not null && note.StartsWith("Rejected", StringComparison.OrdinalIgnoreCase);
+                var moved = note is not null && (note.StartsWith("Sent back", StringComparison.OrdinalIgnoreCase) || note.StartsWith("Moved by", StringComparison.OrdinalIgnoreCase));
+                var cancelled = note == "Cancelled";
+                if (cancelled) { list.Add(new(s.Name, s.RoleName, 0, s.At, "rejected", "Cancelled", "You cancelled this request")); continue; }
+                if (rejected) { list.Add(new(s.Name, s.RoleName, s.Level, s.At, "rejected", "Rejected", note!)); continue; }
+                if (moved) { list.Add(new(s.Name, s.RoleName, s.Level, s.At, "moved", note!.StartsWith("Sent back", StringComparison.OrdinalIgnoreCase) ? "Sent back" : "Reassigned", note)); continue; }
+                if (acted) continue;   // the row for when it reached them; their own decision comes later
+                var waiting = i == steps.Count - 1 && viewing.Status == "Pending" && string.IsNullOrEmpty(note);
+                list.Add(waiting ? new(s.Name, s.RoleName, s.Level, s.At, "pending", "Pending", "Waiting for a decision")
+                                 : new(s.Name, s.RoleName, s.Level, s.At, "approved", "Approved", string.IsNullOrEmpty(note) ? "Approved" : note));
+            }
+            // the road ahead for a request still waiting
+            if (viewing.Status == "Pending" && trail is { Upcoming.Count: > 0 })
+                foreach (var u in trail.Upcoming)
+                    list.Add(new(u.Names.Count == 0 ? "No approver set for this level" : string.Join(", ", u.Names.Take(3).Select(Nice)), null, u.Level, null, u.Final ? "final" : "upcoming",
+                                 u.Final ? "Final approval" : "Next", u.Final ? "Gives the final approval" : "Reviews next"));
+            return list;
+        }
+    }
+
+    async Task Saved() { showForm = false; await Load(); _ = Toast("Request saved"); }
+    Task Note(string message) => Toast(message);
 
     async Task ConfirmCancel()
     {
         busy = true; cancelError = null;
-        var r = await Portal.CancelLeave(cancelling!.Id);
+        var r = cancelling!.Kind == "leave" ? await Portal.CancelLeave(cancelling.Id) : await Portal.CancelRequest((int)cancelling.Id);
         busy = false;
         if (!r.Ok) { cancelError = r.Error; return; }
         cancelling = null;

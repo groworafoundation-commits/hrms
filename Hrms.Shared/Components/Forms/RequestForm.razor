@@ -1,0 +1,204 @@
+@inject PortalClient Portal
+
+<form class="card rq-form" @onsubmit="Save">
+    <header class="rq-fhead">
+        <span class="rq-fico"><Icon Name="@IconName" Size="20" /></span>
+        <div><b>Submit New @Title Request</b><small>@Subtitle</small></div>
+        <span class="rq-module">@Title Module</span>
+    </header>
+
+    @if (Kind == "COMP")
+    {
+        <section class="rq-fsec">
+            <h4><i></i> 1. WHAT DO YOU NEED</h4>
+            <div class="rq-seg wide">
+                <button type="button" class="@(sub == "COC" ? "on" : "")" @onclick='() => SetSub("COC")'>Earn credit (I worked on a day off)</button>
+                <button type="button" class="@(sub == "COL" ? "on" : "")" @onclick='() => SetSub("COL")'>Use credit (take comp off)</button>
+            </div>
+            <div class="rq-quota">
+                <span class="rq-qok"><Icon Name="wallet" Size="14" /></span>
+                <div class="rq-qname"><b>Comp off balance</b><small>@(balance is null ? "Loading..." : $"Credits last {balance.ValidDays} days from the day worked.")</small></div>
+                @if (balance is not null)
+                {
+                    <div class="rq-qmeta">
+                        @if (balance.Pending > 0) { <span>Waiting: @balance.Pending.ToString("0.##")d</span> }
+                        @if (NextExpiry is { } ne) { <span>Next expiry: @ne.ToString("dd MMM yyyy")</span> }
+                        <em class="@(balance.Available - balance.Pending <= 0 ? "neg" : "")">@((balance.Available - balance.Pending).ToString("0.##")) Day(s) Available</em>
+                    </div>
+                }
+            </div>
+        </section>
+    }
+
+    <section class="rq-fsec">
+        <h4><i></i> @(Kind == "COMP" ? "2" : "1"). @PeriodTitle</h4>
+        @if (Real == "SB")
+        {
+            <div class="rq-three">
+                <div class="rq-fld"><label><Icon Name="calendar" Size="13" /> Date <em>*</em></label><input class="rq-in" type="date" value="@from.ToString("yyyy-MM-dd")" @onchange="FromChanged" /></div>
+                <div class="rq-fld"><label><Icon Name="clock" Size="13" /> Leaving at <em>*</em></label><input class="rq-in" type="time" value="@fromTime" @onchange="SetFromTime" /></div>
+                <div class="rq-fld"><label><Icon Name="clock" Size="13" /> Back at <em>*</em></label><input class="rq-in" type="time" value="@toTime" @onchange="SetToTime" /></div>
+            </div>
+            <div class="rq-total"><span><Icon Name="clock" Size="15" /> Calculated Break Length:</span><span class="rq-daypill">@BreakText</span></div>
+        }
+        else if (Real == "COC")
+        {
+            <div class="rq-three">
+                <div class="rq-fld"><label><Icon Name="calendar" Size="13" /> Day you worked <em>*</em></label><input class="rq-in" type="date" max="@DateTime.Today.ToString("yyyy-MM-dd")" value="@from.ToString("yyyy-MM-dd")" @onchange="FromChanged" /></div>
+                <div class="rq-fld"><label><Icon Name="clock" Size="13" /> Credit asked for</label>
+                    <select class="rq-in" value="@(days == 0.5m ? "half" : "full")" @onchange='e => days = e.Value?.ToString() == "half" ? 0.5m : 1m'>
+                        <option value="full">Full Day (1)</option><option value="half">Half Day (0.5)</option></select></div>
+            </div>
+        }
+        else
+        {
+            <div class="rq-three">
+                @if (Real == "COL")
+                {
+                    <div class="rq-fld"><label><Icon Name="clock" Size="13" /> Day Portion</label>
+                        <select class="rq-in" value="@portion" @onchange="PortionChanged"><option value="full">Full Day(s)</option><option value="half">Half Day</option></select></div>
+                }
+                <div class="rq-fld"><label><Icon Name="calendar" Size="13" /> From Date <em>*</em></label><input class="rq-in" type="date" value="@from.ToString("yyyy-MM-dd")" @onchange="FromChanged" /></div>
+                <div class="rq-fld"><label><Icon Name="calendar" Size="13" /> To Date <em>*</em></label><input class="rq-in" type="date" value="@to.ToString("yyyy-MM-dd")" @onchange="ToChanged" /></div>
+            </div>
+            @if (Real == "OD" && from.Date == to.Date)
+            {
+                <div class="rq-two">
+                    <div class="rq-fld"><label><Icon Name="clock" Size="13" /> From time <span class="rq-opt">(Optional)</span></label><input class="rq-in" type="time" value="@fromTime" @onchange="SetFromTime" /></div>
+                    <div class="rq-fld"><label><Icon Name="clock" Size="13" /> To time <span class="rq-opt">(Optional)</span></label><input class="rq-in" type="time" value="@toTime" @onchange="SetToTime" /></div>
+                </div>
+            }
+            <div class="rq-total"><span><Icon Name="calendar-check" Size="15" /> Calculated Total Days:</span><span class="rq-daypill">@days.ToString("0.#") Day(s)</span>
+                <small>@(Real == "COL" ? $"Back at work on {to.AddDays(1):dd MMM yyyy}" : "")</small></div>
+        }
+    </section>
+
+    <section class="rq-fsec">
+        <h4><i></i> @(Kind == "COMP" ? "3" : "2"). APPROVAL</h4>
+        @if (approvers.Count > 1)
+        {
+            <div class="rq-fld">
+                <label><Icon Name="user-search" Size="13" /> Send to for approval <em>*</em></label>
+                <select class="rq-in" @bind="pushTo">
+                    <option value="">Select who approves</option>
+                    @foreach (var a in approvers) { <option value="@a.Id">@Nice(a.Name) | @a.RoleName (level @a.Level)</option> }
+                </select>
+            </div>
+        }
+        <div class="rq-rules"><p>@RouteText</p><span><Icon Name="shield" Size="14" /> Approval Route</span></div>
+    </section>
+
+    <section class="rq-fsec">
+        <h4><i></i> @(Kind == "COMP" ? "4" : "3"). JUSTIFICATION</h4>
+        <div class="rq-two">
+            <div class="rq-fld">
+                <div class="rq-lblrow"><label><Icon Name="megaphone" Size="13" /> Reason @if (ReasonRequired) { <em>*</em> }</label><small>@reason.Length/500 chars</small></div>
+                <textarea class="rq-in" rows="3" maxlength="500" placeholder="@ReasonHint" @bind="reason" @bind:event="oninput"></textarea>
+            </div>
+            <div class="rq-fld">
+                <div class="rq-lblrow"><label><Icon Name="file" Size="13" /> Additional Remarks <span class="rq-opt">(Optional)</span></label><small>@remarks.Length/500 chars</small></div>
+                <textarea class="rq-in" rows="3" maxlength="500" placeholder="Any extra comments for your approver" @bind="remarks" @bind:event="oninput"></textarea>
+            </div>
+        </div>
+        <AttachmentPicker @ref="picker" />
+    </section>
+
+    @if (error is not null) { <div class="form-error">@error</div> }
+    <footer class="rq-ffoot">
+        <button type="button" class="rq-fcancel" @onclick="OnCancel" disabled="@busy">Cancel</button>
+        <button type="submit" class="rq-fsubmit" disabled="@busy"><Icon Name="arrow-right" Size="14" /> @(busy ? "Sending..." : "Submit Request")</button>
+    </footer>
+</form>
+
+@code {
+    // OD, WFH, SB or COMP (comp off: earning a credit or using one)
+    [Parameter] public string Kind { get; set; } = "OD";
+    [Parameter] public EventCallback OnSaved { get; set; }
+    [Parameter] public EventCallback<string> OnNote { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    List<Approver> approvers = [];
+    CompOffBalance? balance;
+    AttachmentPicker? picker;
+    string sub = "COC", pushTo = "", reason = "", remarks = "", fromTime = "", toTime = "", portion = "full";
+    DateTime from = DateTime.Today, to = DateTime.Today;
+    decimal days = 1;
+    bool busy;
+    string? error;
+
+    string Real => Kind == "COMP" ? sub : Kind;
+    string Title => Kind switch { "OD" => "On Duty", "WFH" => "Work From Home", "SB" => "Short Break", _ => "Comp Off" };
+    string IconName => Kind switch { "OD" => "briefcase", "WFH" => "home", "SB" => "clock", _ => "wallet" };
+    string Subtitle => Kind switch
+    {
+        "OD" => "Tell your approver where you will be on duty and when.",
+        "WFH" => "Ask to work from home on the days you choose.",
+        "SB" => "Ask for a short permission to step out during the day.",
+        _ => sub == "COC" ? "Ask for credit for a day you worked on a holiday or day off." : "Use your comp off credit to take time off."
+    };
+    string PeriodTitle => Real switch { "SB" => "BREAK DETAILS", "COC" => "DAY WORKED", "COL" => "COMP OFF DAYS", _ => "DUTY PERIOD" };
+    bool ReasonRequired => Real is "OD" or "WFH" or "COC";
+    string ReasonHint => Real switch { "OD" => "State where you will be on duty and why", "WFH" => "State why you need to work from home", "COC" => "State what you worked on that day", "SB" => "Why do you need to step out?", _ => "Anything your approver should know" };
+    DateTime? NextExpiry => balance?.Credits.Where(c => c.ExpiresOn.Date >= DateTime.Today && c.Credits > c.Used).OrderBy(c => c.ExpiresOn).Select(c => (DateTime?)c.ExpiresOn).FirstOrDefault();
+    static string Nice(string s) => s == s.ToUpperInvariant() || s == s.ToLowerInvariant() ? Fmt.Title(s) : s;
+
+    string RouteText => approvers.Count == 0
+        ? "No one is above you in the approval chain, so this is approved as soon as you send it."
+        : approvers.Count == 1
+            ? $"Your request goes to {Nice(approvers[0].Name)} ({approvers[0].RoleName}) for approval. They can approve it or pass it to someone senior. You can cancel it until it is approved."
+            : "Choose who approves your request. They can approve it or pass it to someone senior. You can cancel it until it is approved.";
+
+    int? Minutes => TimeSpan.TryParse(fromTime, out var a) && TimeSpan.TryParse(toTime, out var b) && b > a ? (int)(b - a).TotalMinutes : null;
+    string BreakText => Minutes is { } m ? (m >= 60 ? $"{m / 60} h {m % 60} min" : $"{m} min") : "-";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Kind == "COC" || Kind == "COMP") { from = to = DateTime.Today.AddDays(-1); }
+        try { approvers = await Portal.Approvers() ?? []; } catch { }
+        try { balance = await Portal.CompOff(); } catch { }
+        if (approvers.Count == 1) pushTo = approvers[0].Id;
+    }
+
+    void SetFromTime(ChangeEventArgs e) => fromTime = e.Value?.ToString() ?? "";
+    void SetToTime(ChangeEventArgs e) => toTime = e.Value?.ToString() ?? "";
+
+    void SetSub(string s)
+    {
+        sub = s; days = 1; portion = "full";
+        from = to = s == "COC" ? DateTime.Today.AddDays(-1) : DateTime.Today;
+    }
+
+    void Recalc()
+    {
+        if (Real == "COC") return;
+        days = portion == "half" && from.Date == to.Date ? 0.5m : Math.Max(1, (decimal)(to.Date - from.Date).TotalDays + 1);
+    }
+    void PortionChanged(ChangeEventArgs e) { portion = e.Value?.ToString() == "half" ? "half" : "full"; if (portion == "half") to = from; Recalc(); }
+    void FromChanged(ChangeEventArgs e) { if (DateTime.TryParse(e.Value?.ToString(), out var d)) { from = d; if (to < from || Real is "SB" or "COC" || portion == "half") to = from; Recalc(); } }
+    void ToChanged(ChangeEventArgs e) { if (DateTime.TryParse(e.Value?.ToString(), out var d)) { to = d < from ? from : d; if (to != from) portion = "full"; Recalc(); } }
+
+    async Task Save()
+    {
+        var type = Real;
+        if (ReasonRequired && reason.Trim().Length < 3) { error = "Please give a reason (a few words)."; return; }
+        if (type == "SB" && Minutes is null) { error = "Enter the time you leave and the time you are back."; return; }
+        if (string.IsNullOrEmpty(pushTo) && approvers.Count > 0) { error = "Choose who approves this request."; return; }
+        busy = true; error = null;
+        var r = await Portal.CreateRequest(new
+        {
+            type, fromDate = from, toDate = type is "SB" or "COC" ? from : to, fromTime = type is "SB" or "OD" && fromTime != "" ? fromTime : null, toTime = type is "SB" or "OD" && toTime != "" ? toTime : null,
+            days = type == "SB" ? 0m : days, reason, remarks, pushTo
+        });
+        if (!r.Ok) { busy = false; error = r.Error; return; }
+        string? note = null;
+        if (picker is { Count: > 0 })
+        {
+            string? transNo = null;
+            try { using var doc = System.Text.Json.JsonDocument.Parse(r.Message ?? "{}"); if (doc.RootElement.TryGetProperty("TransNo", out var t)) transNo = t.GetString(); } catch { }
+            note = transNo is null ? "Your request was saved, but its documents could not be attached." : await picker.UploadAll("request", transNo);
+        }
+        busy = false;
+        if (note is not null) await OnNote.InvokeAsync(note);
+        await OnSaved.InvokeAsync();
+    }
+}

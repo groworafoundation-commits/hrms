@@ -82,6 +82,12 @@ public class LeaveRow
     public string? TransNo { get; set; }
     public string? HeldBy { get; set; }
     public string? HeldByName { get; set; }
+    public string? RejectReason { get; set; }
+    public string? Reason { get; set; }
+    public int Level { get; set; }
+    public int FinalLevel { get; set; }
+    public string? HeldByRole { get; set; }
+    public string? Remarks { get; set; }
 }
 
 public class EmployeeRow
@@ -246,6 +252,8 @@ WITH emp AS (SELECT * FROM #emp)";
     const string LeaveSelect = @"
 SELECT l.Id AS Id, l.Rejoiningdate AS Rejoining, CAST(ISNULL(l.LeaveSalWithoutLeave,0) AS bit) AS SalaryWithoutLeave, l.EmpCode, e.Name, l.LeaveType, l.FromDate, l.ToDate, l.NoofLeavedays AS Days, l.Applieddate AS Applied, l.Transno AS TransNo, l.Userid AS HeldBy,
        (SELECT TOP 1 ISNULL(NULLIF(u.name,''), u.username) FROM interface.Userdef u WHERE u.userid = l.Userid) AS HeldByName,
+       (SELECT TOP 1 r.rolename FROM interface.Userdef u JOIN interface.Roledef r ON r.roleid = u.roleid WHERE u.userid = l.Userid) AS HeldByRole,
+       CAST(ISNULL(l.Userlevel,0) AS int) AS Level, CAST(ISNULL(l.documentlevel,0) AS int) AS FinalLevel,
        CASE WHEN l.Userlevel >= l.documentlevel THEN 'Approved' ELSE 'Pending' END AS Status
 FROM inter01.EMPLOYEELEAVEDETAILS l JOIN emp e ON e.EmpCode = l.EmpCode
 WHERE ISNULL(l.Deleteflag,0)=0";

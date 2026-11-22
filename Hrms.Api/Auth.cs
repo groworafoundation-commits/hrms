@@ -110,11 +110,14 @@ public static class AuthEndpoints
         if (path.StartsWith("/api/admin/attendance/requests", StringComparison.OrdinalIgnoreCase)) return "H206";
         if (path.StartsWith("/api/admin/attendance/setup", StringComparison.OrdinalIgnoreCase)) return "H207";
         if (path.StartsWith("/api/admin/attendance", StringComparison.OrdinalIgnoreCase)) return "H205";
-        if (path.StartsWith("/api/me/leave", StringComparison.OrdinalIgnoreCase) || path.StartsWith("/api/me/approvers", StringComparison.OrdinalIgnoreCase)) return "H102";
+        if (path.StartsWith("/api/me/leave", StringComparison.OrdinalIgnoreCase) || path.StartsWith("/api/me/approvers", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/me/requests", StringComparison.OrdinalIgnoreCase) || path.StartsWith("/api/me/attachments", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/api/me/compoff", StringComparison.OrdinalIgnoreCase)) return "H102";
         if (path.StartsWith("/api/me/calendar", StringComparison.OrdinalIgnoreCase)) return "H103";
         if (path.StartsWith("/api/me/payslip", StringComparison.OrdinalIgnoreCase)) return "H104";
         if (path.StartsWith("/api/me", StringComparison.OrdinalIgnoreCase)) return "H105";
-        if (path.StartsWith("/api/admin/approvals", StringComparison.OrdinalIgnoreCase)) return "H201";
+        if (path.StartsWith("/api/admin/approvals", StringComparison.OrdinalIgnoreCase) || path.StartsWith("/api/requests", StringComparison.OrdinalIgnoreCase)) return "H201";
+        if (path.StartsWith("/api/admin/departments", StringComparison.OrdinalIgnoreCase) || path.StartsWith("/api/admin/org", StringComparison.OrdinalIgnoreCase)) return "H303";
         if (path.StartsWith("/api/admin/users", StringComparison.OrdinalIgnoreCase)) return "H202";
         if (path.StartsWith("/api/admin/roles", StringComparison.OrdinalIgnoreCase)) return "H203";
         if (path.StartsWith("/api/admin/menus", StringComparison.OrdinalIgnoreCase)) return "H204";

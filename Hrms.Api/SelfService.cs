@@ -5,12 +5,13 @@ namespace Hrms.Api;
 // Employee self-service. Everything here is pinned to the signed-in employee (CurrentUser.SelfCode makes the data layer expose only
 // that employee), so these calls can never read or change anyone else's records.
 
-public record LeaveRequestInput(string LeaveType, DateTime FromDate, DateTime ToDate, decimal? Days, bool SalaryWithoutLeave, string? PushTo);
+public record LeaveRequestInput(string LeaveType, DateTime FromDate, DateTime ToDate, decimal? Days, bool SalaryWithoutLeave, string? PushTo, string? Reason = null, string? Remarks = null);
 public record LeaveTaken(string LeaveType, string TypeName, decimal Days, int Records);
 public record MyProfile(EmployeeRow Employee, List<LeaveTaken> Taken, int Pending, int Year);
 
 public static partial class Writes
 {
+    internal static string? Cut(string? s) { var t = s?.Trim(); return string.IsNullOrEmpty(t) ? null : t.Length > 500 ? t[..500] : t; }
     static string Me(HttpContext ctx) => (ctx.Items["user"] as AuthUser)?.EmployeeCode ?? throw new ApiException("Your login is not linked to an employee record.", 403);
 
     public static void MapSelf(this WebApplication app)
@@ -34,14 +35,65 @@ public static partial class Writes
             await using var c = db.Open();
             var rows = (await c.QueryAsync<LeaveRow>(Sql.Leave, new { type = (string?)null, start = from ?? DateTime.Today.AddYears(-1), end = to ?? DateTime.Today.AddYears(1), q = (string?)null })).ToList();
             foreach (var l in rows) l.LeaveName = LeaveTypes.Name(l.LeaveType);
+            // rejected requests are removed from the ERP's leave table, so they come from the history kept at rejection (negative Id: nothing to cancel or open)
+            try
+            {
+                var me = Me(ctx);
+                var rejected = (await c.QueryAsync<LeaveRow>(@"SELECT -r.Id AS Id, r.EmpCode, r.LeaveType, r.FromDate, r.ToDate, ISNULL(r.Days,0) AS Days, r.Applied, 'Rejected' AS Status, r.TransNo, r.Reason AS RejectReason
+                    FROM hrms.LeaveRejection r WHERE r.EmpCode = @me AND r.FromDate <= @end AND r.ToDate >= @start", new { me, start = from ?? DateTime.Today.AddYears(-1), end = to ?? DateTime.Today.AddYears(1) })).ToList();
+                foreach (var l in rejected) l.LeaveName = LeaveTypes.Name(l.LeaveType);
+                rows.AddRange(rejected);
+            }
+            catch { /* the history table is created on start; until then the list is just the live requests */ }
+            await LeaveNotes.Fill(c, rows);
             return rows;
+        });
+
+        // the steps a request has been through, oldest first (a rejected request is found through its saved copy, which has a negative id)
+        app.MapGet("/api/me/leave/{id:long}/timeline", async (Db db, HttpContext ctx, long id) =>
+        {
+            var me = Me(ctx);
+            await using var c = db.Open();
+            var transNo = id > 0
+                ? await c.ExecuteScalarAsync<string?>("SELECT Transno FROM inter01.EMPLOYEELEAVEDETAILS WHERE Id=@id AND EmpCode=@me", new { id, me })
+                : await c.ExecuteScalarAsync<string?>("SELECT TransNo FROM hrms.LeaveRejection WHERE Id=@rid AND EmpCode=@me", new { rid = -id, me });
+            if (transNo is null) return Results.Json(new { error = "Leave record not found." }, statusCode: 404);
+            var steps = (await c.QueryAsync<LeaveStep>(@"
+SELECT t.Userid AS UserId, ISNULL(NULLIF(u.name,''), ISNULL(u.username, t.Userid)) AS Name, r.rolename AS RoleName, CAST(ISNULL(t.Auth,0) AS int) AS Level, t.DateTime AS At,
+       NULLIF(LTRIM(RTRIM(CAST(t.Descr AS nvarchar(max)))), '') AS Note
+FROM inter01.UserwiseTransaction t LEFT JOIN interface.Userdef u ON u.userid = t.Userid LEFT JOIN interface.Roledef r ON r.roleid = u.roleid
+WHERE t.TransNo = @transNo ORDER BY t.id", new { transNo })).ToList();
+            // where the request stands in the chain: who holds it, the level it ends at, and who is still to come
+            var upcoming = new List<UpcomingLevel>();
+            var finalLevel = 0; var finalNames = new List<string>();
+            try
+            {
+                var row = id > 0 ? await c.QueryFirstOrDefaultAsync<(string? HeldBy, int Level, int Final)>(
+                    "SELECT Userid AS HeldBy, CAST(ISNULL(Userlevel,0) AS int) AS Level, CAST(ISNULL(documentlevel,0) AS int) AS Final FROM inter01.EMPLOYEELEAVEDETAILS WHERE Id=@id AND EmpCode=@me", new { id, me }) : default;
+                finalLevel = row.Final;
+                if (finalLevel > 0)
+                {
+                    var everyone = await Workflow.Approvers(c, null, 0, "");
+                    finalNames = everyone.Where(a => a.Level == finalLevel && !string.Equals(a.Id, me, StringComparison.OrdinalIgnoreCase)).Select(a => a.Name).Distinct().ToList();
+                    if (row.Level < finalLevel && row.HeldBy is not null)
+                    {
+                        var heldLevel = await c.ExecuteScalarAsync<int?>(@"SELECT TOP 1 CAST(a.[level] AS int) FROM interface.Userdef u JOIN interface.accessright a ON a.roleid = u.roleid AND a.optionid = @opt
+                            WHERE u.userid = @held", new { opt = Workflow.ApprovalOption, held = row.HeldBy }) ?? 0;
+                        foreach (var g in everyone.Where(a => a.Level > heldLevel && a.Level <= finalLevel && !string.Equals(a.Id, me, StringComparison.OrdinalIgnoreCase)).GroupBy(a => a.Level).OrderBy(g => g.Key))
+                            upcoming.Add(new UpcomingLevel(g.Key, g.Select(a => a.Name).Distinct().ToList(), g.Key == finalLevel));
+                        if (upcoming.Count == 0 || upcoming[^1].Level != finalLevel) upcoming.Add(new UpcomingLevel(finalLevel, finalNames, true));
+                    }
+                }
+            }
+            catch { /* the trail still shows without the road ahead */ }
+            return Results.Ok(new LeaveTimeline(steps, upcoming, finalLevel, finalNames));
         });
 
         app.MapGet("/api/me/approvers", async (Db db, HrmsSession s, HttpContext ctx) =>
         {
             var user = (AuthUser)ctx.Items["user"]!;
             await using var c = db.Open();
-            return await Workflow.Approvers(c, null, s.UserLevel, user.UserId, Me(ctx));
+            return (await LeaveRouting.For(c, null, s, user, Me(ctx))).Allowed;
         });
 
         app.MapPost("/api/me/leave", async (Db db, HrmsSession s, HttpContext ctx, LeaveRequestInput x, bool dryRun = false) => await Run(db, dryRun, async (c, tx) =>
@@ -50,9 +102,12 @@ public static partial class Writes
             var last = await LastProcessedMonthEnd(c, tx);
             if (last is not null && x.FromDate.Date <= last) throw new ApiException("Payroll is already processed for these dates. Please contact HR.", 409);
             var user = (AuthUser)ctx.Items["user"]!;
-            if (string.IsNullOrWhiteSpace(x.PushTo)) throw new ApiException("Choose who should approve this request.");
-            var target = (await Workflow.Approvers(c, tx, s.UserLevel, user.UserId, me)).FirstOrDefault(a => a.Id == x.PushTo)
-                ?? throw new ApiException("That person cannot approve leave requests.");
+            var route = await LeaveRouting.For(c, tx, s, user, me);
+            // a fixed route (the department head, or HR for a manager) is used even if the form sent nothing; otherwise the person must pick from the allowed list
+            var target = route.Allowed.FirstOrDefault(a => a.Id == x.PushTo) ?? (route.Allowed.Count == 1 ? route.Allowed[0] : null);
+            // the top of the chain (the Director today): nobody is above them, so their leave is approved as it is saved
+            var topOfChain = route.Allowed.Count == 0 && route.OwnLevel >= route.DocLevel;
+            if (target is null && !topOfChain) throw new ApiException(string.IsNullOrWhiteSpace(x.PushTo) ? "Choose who should approve this request." : "That person cannot approve leave requests.");
             var input = new LeaveInput(me, x.LeaveType, x.FromDate, x.ToDate, DateTime.Today, null, x.Days, x.SalaryWithoutLeave);
             await ValidateLeave(c, tx, input, null);
             var transNo = await NextNo(c, tx, s, me, "458", "Employee Leave Apply");
@@ -61,13 +116,16 @@ public static partial class Writes
             await c.ExecuteAsync("inter01.EmployeeLeaveInsertNEW", new
             {
                 EmpCode = me, FromDate = x.FromDate.Date, Todate = x.ToDate.Date, LeaveType = x.LeaveType, Applieddate = DateTime.Today, RejoiningDate = x.ToDate.AddDays(1).Date,
-                Userid = s.UserId, Userlevel = s.UserLevel, Documentlevel = s.DocLevel, Transtype = "458", Transno = transNo, Deleteflag = false,
+                Userid = s.UserId, Userlevel = route.OwnLevel, Documentlevel = route.DocLevel, Transtype = "458", Transno = transNo, Deleteflag = false,
                 LeaveSalWithoutLeave = x.SalaryWithoutLeave ? 1 : 0, LeaveSalWithLeave = 1, Lnoofdays = days
             }, tx, commandType: System.Data.CommandType.StoredProcedure);
             await LogTransaction(c, tx, s, transNo, "458");
             var leaveId = await c.ExecuteScalarAsync<long>("SELECT Id FROM inter01.EMPLOYEELEAVEDETAILS WHERE Transno=@transNo AND ISNULL(Deleteflag,0)=0", new { transNo }, tx);
-            await Workflow.Push(c, tx, leaveId, transNo, target);
-            return new { TransNo = transNo, Days = days, Pending = s.UserLevel < s.DocLevel, With = target.Name };
+            if (!string.IsNullOrWhiteSpace(x.Reason) || !string.IsNullOrWhiteSpace(x.Remarks))
+                await c.ExecuteAsync("INSERT hrms.LeaveNote (TransNo, Reason, Remarks) VALUES (@transNo, @reason, @remarks)",
+                    new { transNo, reason = Cut(x.Reason) ?? "", remarks = Cut(x.Remarks) }, tx);
+            if (target is not null) await Workflow.Push(c, tx, leaveId, transNo, target);
+            return new { TransNo = transNo, Days = days, Pending = route.OwnLevel < route.DocLevel, With = target?.Name ?? "approved automatically" };
         }));
 
         app.MapDelete("/api/me/leave/{id:long}", async (Db db, HttpContext ctx, long id, bool dryRun = false) => await Run(db, dryRun, async (c, tx) =>

@@ -15,6 +15,32 @@ public record NotificationList(int Unread, List<NotificationItem> Items);
 public class OutboxItem { public long Id { get; set; } public string? ToUser { get; set; } public string ToAddress { get; set; } = ""; public string Subject { get; set; } = ""; public string Status { get; set; } = ""; public int Attempts { get; set; } public DateTime CreatedAt { get; set; } public DateTime? SentAt { get; set; } public string? Error { get; set; } }
 public record EmailOverview(bool Configured, string? From, string? Host, List<OutboxItem> Rows);
 public record Approver(string Id, string Name, string RoleName, int Level);
+public class RequestRow
+{
+    public int Id { get; set; } public string TransNo { get; set; } = ""; public string EmpCode { get; set; } = ""; public string? Name { get; set; }
+    public string Type { get; set; } = ""; public string TypeName { get; set; } = "";
+    public DateTime FromDate { get; set; } public DateTime ToDate { get; set; } public TimeSpan? FromTime { get; set; } public TimeSpan? ToTime { get; set; }
+    public decimal Days { get; set; } public int? Minutes { get; set; } public string? Reason { get; set; } public string? Remarks { get; set; }
+    public string Status { get; set; } = ""; public string? HeldBy { get; set; } public string? HeldByName { get; set; } public string? HeldByRole { get; set; }
+    public int Level { get; set; } public int FinalLevel { get; set; } public string? DecisionNote { get; set; } public DateTime CreatedAt { get; set; } public int Files { get; set; }
+}
+public record CompOffCredit(DateTime EarnedOn, DateTime ExpiresOn, decimal Credits, decimal Used);
+public record CompOffBalance(decimal Available, decimal Pending, int ValidDays, List<CompOffCredit> Credits);
+public record RequestOptions(bool Final, int Level, int DocLevel, List<Approver> Push);
+public record AttachmentRow(int Id, string FileName, string ContentType, int SizeBytes, string? UploadedBy, DateTime UploadedAt);
+public record OrgNode(string Id, string Name, string? Title, string? RoleName, int Level, string? Dept);
+public record OrgView(OrgNode Me, List<OrgNode> Chain, string? Dept, List<OrgNode> Team, List<OrgNode> Reports, string? Note);
+public record OrgDept(int Id, string Name, OrgNode? Head, List<OrgNode> Members);
+public record OrgCompany(List<OrgNode> Leaders, List<OrgNode> Hr, List<OrgDept> Departments, List<OrgNode> Unassigned);
+public record LeaveStep(string UserId, string Name, string? RoleName, int Level, DateTime At, string? Note);
+// The rest of the chain for a request still waiting: each level above its holder up to where it ends, and who can give the final approval.
+public record UpcomingLevel(int Level, List<string> Names, bool Final);
+public record LeaveTimeline(List<LeaveStep> Steps, List<UpcomingLevel> Upcoming, int FinalLevel, List<string> FinalApprovers);
+public record Department(int Id, string Name, string? ApproverUserId, string? ApproverName, bool Active, int Members);
+public record DeptMember(string EmpCode, string Name, string? Designation, int? DeptId, string? DeptName);
+public record LeaveRule(int EmployeeFinal, int ManagerFinal);
+public record DepartmentOverview(List<Department> Departments, LeaveRule Rule, List<Approver> Approvers);
+public record PendingAll(List<LeaveRow> Rows, List<Approver> Assignable);
 public class ApprovalRow : LeaveRow { public int FromLevel { get; set; } public string? FromUser { get; set; } public string? Note { get; set; } public List<string> Facts { get; set; } = []; }
 public record AskAnswer(string Intent, string Title, string Text, List<string> Lines, string? Link, List<string> Suggestions);
 public record CheckFinding(string Area, string Severity, string Check, string EmpCode, string Name, string Detail);
@@ -99,6 +125,37 @@ public sealed class PortalClient(HttpClient http)
     public Task<MySummary?> Me() => http.GetFromJsonAsync<MySummary>("api/me");
     public Task<List<LeaveRow>?> MyLeave(DateTime from, DateTime to) => http.GetFromJsonAsync<List<LeaveRow>>($"api/me/leave?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}");
     public Task<WriteResult> RequestLeave(object body) => Send(HttpMethod.Post, "api/me/leave", body);
+    public Task<List<RequestRow>?> MyRequests(DateTime from, DateTime to) => http.GetFromJsonAsync<List<RequestRow>>($"api/me/requests?from={from:yyyy-MM-dd}&to={to:yyyy-MM-dd}");
+    public Task<CompOffBalance?> CompOff() => http.GetFromJsonAsync<CompOffBalance>("api/me/compoff");
+    public Task<WriteResult> CreateRequest(object body) => Send(HttpMethod.Post, "api/me/requests", body);
+    public Task<WriteResult> CancelRequest(int id) => Send(HttpMethod.Delete, $"api/me/requests/{id}");
+    public Task<LeaveTimeline?> RequestTimeline(int id) => http.GetFromJsonAsync<LeaveTimeline>($"api/me/requests/{id}/timeline");
+    public Task<List<RequestRow>?> PendingRequests() => http.GetFromJsonAsync<List<RequestRow>>("api/requests/pending");
+    public Task<RequestOptions?> ReqOptions(int id) => http.GetFromJsonAsync<RequestOptions>($"api/requests/{id}/options");
+    public Task<WriteResult> ApproveRequest(int id, string? to, string? note) => Send(HttpMethod.Post, $"api/requests/{id}/approve", new { to, note });
+    public Task<WriteResult> RejectRequest(int id, string note) => Send(HttpMethod.Post, $"api/requests/{id}/reject", new { note });
+    public Task<List<AttachmentRow>?> Attachments(string ownerType, string ownerKey) => http.GetFromJsonAsync<List<AttachmentRow>>($"api/attachments?ownerType={Q(ownerType)}&ownerKey={Q(ownerKey)}");
+    public async Task<byte[]?> AttachmentBytes(int id) { using var res = await http.GetAsync($"api/attachments/{id}"); return res.IsSuccessStatusCode ? await res.Content.ReadAsByteArrayAsync() : null; }
+    public Task<WriteResult> DeleteAttachment(int id) => Send(HttpMethod.Delete, $"api/me/attachments/{id}");
+    public async Task<WriteResult> UploadAttachment(string ownerType, string ownerKey, string fileName, string contentType, Stream data)
+    {
+        try
+        {
+            using var form = new MultipartFormDataContent();
+            var part = new StreamContent(data);
+            part.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
+            form.Add(part, "file", fileName);
+            using var res = await http.PostAsync($"api/me/attachments?ownerType={Q(ownerType)}&ownerKey={Q(ownerKey)}", form);
+            var text = await res.Content.ReadAsStringAsync();
+            string? error = null;
+            try { using var doc = JsonDocument.Parse(text); if (doc.RootElement.TryGetProperty("error", out var e)) error = e.GetString(); } catch (JsonException) { }
+            return res.IsSuccessStatusCode ? new WriteResult(true, null, null) : new WriteResult(false, error ?? $"The service returned {(int)res.StatusCode}.", null);
+        }
+        catch (Exception ex) { return new WriteResult(false, "Couldn't upload: " + ex.Message, null); }
+    }
+    public Task<OrgView?> MyOrg() => http.GetFromJsonAsync<OrgView>("api/me/org");
+    public Task<OrgCompany?> CompanyOrg() => http.GetFromJsonAsync<OrgCompany>("api/admin/org");
+    public Task<LeaveTimeline?> LeaveTimeline(long id) => http.GetFromJsonAsync<LeaveTimeline>($"api/me/leave/{id}/timeline");
     public Task<WriteResult> CancelLeave(long id) => Send(HttpMethod.Delete, $"api/me/leave/{id}");
     public Task<List<PayslipRow>?> MyPayslips() => http.GetFromJsonAsync<List<PayslipRow>>("api/me/payslips");
     public Task<ReportResult?> MyPayslip(string month) => http.GetFromJsonAsync<ReportResult>($"api/me/payslip?month={Q(month)}");
@@ -132,6 +189,15 @@ public sealed class PortalClient(HttpClient http)
     public Task<WriteResult> UpdateMenu(string id, object body) => Send(HttpMethod.Put, $"api/admin/menus/{Q(id)}", body);
     public Task<WriteResult> DeleteMenu(string id) => Send(HttpMethod.Delete, $"api/admin/menus/{Q(id)}");
 
+    public Task<DepartmentOverview?> Departments() => http.GetFromJsonAsync<DepartmentOverview>("api/admin/departments");
+    public Task<List<DeptMember>?> DepartmentMembers() => http.GetFromJsonAsync<List<DeptMember>>("api/admin/departments/members");
+    public Task<WriteResult> SaveDepartment(int? id, string name, string? approver, bool active) =>
+        id is null ? Send(HttpMethod.Post, "api/admin/departments", new { name, approverUserId = approver }) : Send(HttpMethod.Put, $"api/admin/departments/{id}", new { name, approverUserId = approver, active });
+    public Task<WriteResult> DeleteDepartment(int id) => Send(HttpMethod.Delete, $"api/admin/departments/{id}");
+    public Task<WriteResult> AssignDepartment(int? deptId, List<string> empCodes) => Send(HttpMethod.Post, "api/admin/departments/assign", new { deptId, empCodes });
+    public Task<WriteResult> SaveLeaveRule(LeaveRule r) => Send(HttpMethod.Put, "api/admin/departments/rule", r);
+    public Task<PendingAll?> AllPending() => http.GetFromJsonAsync<PendingAll>("api/admin/approvals/all");
+    public Task<WriteResult> Reassign(long id, string to, string? note) => Send(HttpMethod.Post, $"api/admin/approvals/{id}/reassign", new { to, note });
     public Task<List<ApprovalRow>?> Approvals() => http.GetFromJsonAsync<List<ApprovalRow>>("api/admin/approvals");
     public Task<ApprovalOptions?> ApprovalOptions(long id) => http.GetFromJsonAsync<ApprovalOptions>($"api/admin/approvals/{id}/options");
     public Task<WriteResult> Approve(long id, string? to, string? note) => Send(HttpMethod.Post, $"api/admin/approvals/{id}/approve", new { to, note });

@@ -1,0 +1,75 @@
+@inject PortalClient Portal
+
+<div class="rq-up">
+    <div class="rq-lblrow"><label><Icon Name="file" Size="13" /> Supporting Document <span class="rq-opt">(Optional - medical certificate, travel proof, etc.)</span></label></div>
+    <label class="rq-drop @(files.Count >= Max ? "full" : "")">
+        <span class="rq-drop-text"><Icon Name="plus" Size="16" /> Click to upload a document (PDF, PNG, JPG - up to 5 MB each, at most @Max)</span>
+        <span class="rq-browse">Browse File</span>
+        <InputFile OnChange="Pick" accept="application/pdf,image/*" multiple disabled="@(files.Count >= Max || busy)" />
+    </label>
+    @if (files.Count > 0)
+    {
+        <ul class="rq-chosen">
+            @foreach (var f in files)
+            {
+                var item = f;
+                <li><Icon Name="file" Size="14" /> <span>@item.Name</span> <small>@Size(item.Data.Length)</small>
+                    <button type="button" class="rq-chosen-x" aria-label="Remove @item.Name" @onclick="() => files.Remove(item)">&times;</button></li>
+            }
+        </ul>
+    }
+    @if (error is not null) { <div class="form-error">@error</div> }
+</div>
+
+@code {
+    sealed record Picked(string Name, string Type, byte[] Data);
+
+    [Parameter] public int Max { get; set; } = 5;
+
+    readonly List<Picked> files = [];
+    bool busy;
+    string? error;
+
+    static string Size(int bytes) => bytes < 1024 * 1024 ? $"{Math.Max(1, bytes / 1024)} KB" : $"{bytes / 1024.0 / 1024.0:0.#} MB";
+
+    async Task Pick(InputFileChangeEventArgs e)
+    {
+        busy = true; error = null;
+        try
+        {
+            foreach (var file in e.GetMultipleFiles(Math.Max(1, Max - files.Count)))
+            {
+                var type = file.ContentType; var name = file.Name;
+                if (type is not ("application/pdf" or "image/jpeg" or "image/png" or "image/webp") && !type.StartsWith("image/")) { error = "Attach a PDF or a photo."; continue; }
+                Stream source;
+                if (type.StartsWith("image/") && type != "image/png" && type != "image/webp")
+                {
+                    // shrink big phone photos before they are sent
+                    try { var small = await file.RequestImageFileAsync("image/jpeg", 1600, 1600); source = small.OpenReadStream(5 * 1024 * 1024); type = "image/jpeg"; name = Path.ChangeExtension(name, ".jpg"); }
+                    catch { source = file.OpenReadStream(5 * 1024 * 1024); }
+                }
+                else source = file.OpenReadStream(5 * 1024 * 1024);
+                using var ms = new MemoryStream();
+                await using (source) await source.CopyToAsync(ms);
+                files.Add(new Picked(name, type, ms.ToArray()));
+            }
+        }
+        catch (Exception ex) { error = ex.Message.Contains("exceeds", StringComparison.OrdinalIgnoreCase) ? "That file is larger than 5 MB." : "Couldn't read that file: " + ex.Message; }
+        busy = false;
+    }
+
+    public int Count => files.Count;
+
+    // Sends the chosen files once the request exists. Returns a message for the ones that did not go, or null when all did.
+    public async Task<string?> UploadAll(string ownerType, string ownerKey)
+    {
+        var failed = new List<string>();
+        foreach (var f in files.ToList())
+        {
+            using var ms = new MemoryStream(f.Data);
+            var r = await Portal.UploadAttachment(ownerType, ownerKey, f.Name, f.Type, ms);
+            if (!r.Ok) failed.Add($"{f.Name} ({r.Error})");
+        }
+        return failed.Count == 0 ? null : "These documents did not upload: " + string.Join("; ", failed) + ". Open the request and add them again.";
+    }
+}

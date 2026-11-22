@@ -1,0 +1,84 @@
+@inject PortalClient Portal
+@inject IJSRuntime Js
+
+@if (loading) { <p class="muted">Loading documents...</p> }
+else if (files.Count > 0)
+{
+    <ul class="rq-docs">
+        @foreach (var f in files)
+        {
+            var file = f;
+            <li>
+                <span class="rq-docico"><Icon Name="file" Size="16" /></span>
+                <div><b>@file.FileName</b><small>@Size(file.SizeBytes) | @file.UploadedAt.ToString("dd MMM yyyy")</small></div>
+                <button type="button" class="rq-pill" @onclick="() => Open(file)"><Icon Name="eye" Size="13" /> View</button>
+                @if (CanEdit) { <button type="button" class="rq-pill danger" @onclick="() => Remove(file)" disabled="@busy">Remove</button> }
+            </li>
+        }
+    </ul>
+}
+else if (ShowEmpty) { <p class="muted">No documents attached.</p> }
+@if (error is not null) { <div class="form-error">@error</div> }
+@if (preview is not null)
+{
+    <div class="rq-preview" @onclick="() => preview = null"><img src="@preview" alt="Attached document" /><button type="button" class="rq-pill" @onclick="() => preview = null">Close picture</button></div>
+}
+
+@code {
+    [Parameter, EditorRequired] public string OwnerType { get; set; } = "leave";
+    [Parameter, EditorRequired] public string? OwnerKey { get; set; }
+    [Parameter] public bool CanEdit { get; set; }
+    [Parameter] public bool ShowEmpty { get; set; }
+    // told when the number of files changes, so a list's count can follow
+    [Parameter] public EventCallback<int> OnCount { get; set; }
+
+    List<AttachmentRow> files = [];
+    string? preview, error;
+    bool loading = true, busy;
+    string? loadedFor;
+
+    static string Size(int bytes) => bytes < 1024 * 1024 ? $"{Math.Max(1, bytes / 1024)} KB" : $"{bytes / 1024.0 / 1024.0:0.#} MB";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var key = OwnerType + "|" + OwnerKey;
+        if (key == loadedFor) return;
+        loadedFor = key;
+        await Load();
+    }
+
+    public Task Reload() => Load();
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try { files = string.IsNullOrEmpty(OwnerKey) ? [] : await Portal.Attachments(OwnerType, OwnerKey) ?? []; }
+        catch (Exception ex) { error = "Couldn't load the documents: " + ex.Message; files = []; }
+        loading = false;
+        await OnCount.InvokeAsync(files.Count);
+    }
+
+    async Task Open(AttachmentRow f)
+    {
+        error = null;
+        var bytes = await Portal.AttachmentBytes(f.Id);
+        if (bytes is null) { error = "Couldn't open that document."; return; }
+        var b64 = Convert.ToBase64String(bytes);
+        if (f.ContentType.StartsWith("image/")) { preview = $"data:{f.ContentType};base64,{b64}"; return; }
+        try
+        {
+            await Js.InvokeVoidAsync("eval", "window.__openBlob = (b64, type) => { const bin = atob(b64); const arr = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i); window.open(URL.createObjectURL(new Blob([arr], { type })), '_blank'); };");
+            await Js.InvokeVoidAsync("__openBlob", b64, f.ContentType);
+        }
+        catch { error = "This device could not open the PDF here. Open it from a computer."; }
+    }
+
+    async Task Remove(AttachmentRow f)
+    {
+        busy = true; error = null;
+        var r = await Portal.DeleteAttachment(f.Id);
+        busy = false;
+        if (!r.Ok) { error = r.Error; return; }
+        await Load();
+    }
+}

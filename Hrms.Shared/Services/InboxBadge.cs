@@ -13,6 +13,7 @@ public static class InboxBadge
     {
         var n = 0;
         try { if (auth.Can("H201")) n += (await portal.Approvals())?.Count ?? 0; } catch { }
+        try { if (auth.Can("H201")) n += (await portal.PendingRequests())?.Count ?? 0; } catch { }
         try { if (auth.Can("H206")) n += (await att.Requests("Pending"))?.Count ?? 0; } catch { }
         try { if (auth.Can("H301")) n += (await portal.AssetWaitingList())?.Count(w => w.CanDecide) ?? 0; } catch { }
         Set(n);

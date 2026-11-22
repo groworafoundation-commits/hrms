@@ -107,6 +107,7 @@ public static class AttendanceEngine
         public Dictionary<DateTime, string> Holidays = [];
         public ILookup<string, PunchRow> Punches = null!;
         public ILookup<string, LeaveSpan> Leaves = null!;
+        public ILookup<string, ReqSpan> Requests = Enumerable.Empty<ReqSpan>().ToLookup(r => r.EmpCode);
         public DateTime? StartDate;   // first day anyone punched; earlier days have no attendance data at all
     }
 
@@ -125,6 +126,12 @@ public static class AttendanceEngine
         ctx.Leaves = (await c.QueryAsync<LeaveSpan>(@"SELECT EmpCode, FromDate, ToDate, LeaveType FROM inter01.EMPLOYEELEAVEDETAILS
             WHERE ISNULL(Deleteflag,0) = 0 AND ISNULL(Userlevel,0) >= ISNULL(documentlevel,0) AND EmpCode IN @list AND FromDate <= @to AND ToDate >= @from", new { list, from = from.Date, to = to.Date }, tx))
             .ToLookup(l => l.EmpCode, StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            ctx.Requests = (await c.QueryAsync<ReqSpan>(@"SELECT EmpCode, FromDate, ToDate, [Type] FROM hrms.Request WHERE [Status] = 'Approved' AND [Type] IN ('OD','WFH','COL')
+                AND EmpCode IN @list AND FromDate <= @to AND ToDate >= @from", new { list, from = from.Date, to = to.Date }, tx)).ToLookup(r => r.EmpCode, StringComparer.OrdinalIgnoreCase);
+        }
+        catch { /* the request tables are created when the service starts */ }
         ctx.StartDate = await c.ExecuteScalarAsync<DateTime?>("SELECT CAST(MIN(PunchTime) AS date) FROM hrms.AttPunch WHERE Deleted = 0", transaction: tx);
         return ctx;
     }
@@ -142,7 +149,16 @@ public static class AttendanceEngine
         var punches = ctx.Punches[emp].Where(p => p.PunchTime.Date == day.Date).ToList();
         var leave = ctx.Leaves[emp].FirstOrDefault(l => l.FromDate.Date <= day.Date && l.ToDate.Date >= day.Date);
         ctx.Holidays.TryGetValue(day.Date, out var holiday);
-        return Compute(day, shift, punches, holiday, leave is null ? null : LeaveTypes.Name(leave.LeaveType), now, ctx.StartDate);
+        var req = ctx.Requests[emp].FirstOrDefault(r => r.FromDate.Date <= day.Date && r.ToDate.Date >= day.Date);
+        var leaveName = leave is null ? (req is { Type: "COL" } ? "Comp off leave" : null) : LeaveTypes.Name(leave.LeaveType);
+        var d = Compute(day, shift, punches, holiday, leaveName, now, ctx.StartDate);
+        // approved On Duty and Work From Home count as a day worked even without punches
+        if (req is { Type: "OD" or "WFH" })
+        {
+            d.LeaveName ??= req.Type == "OD" ? "On duty" : "Work from home";
+            if (d.Status is "Absent" or "Pending") d.Status = "Present";
+        }
+        return d;
     }
 
     public static DayStatus Compute(DateTime day, ShiftRow s, List<PunchRow> punches, string? holiday, string? leaveName, DateTime now, DateTime? startDate = null)

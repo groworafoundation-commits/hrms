@@ -1,0 +1,131 @@
+@page "/admin/departments"
+@inject PortalClient Portal
+
+<PageTitle>Departments</PageTitle>
+
+<section class="greeting"><div><h1>Departments</h1><p>Each department has a first approver. An employee's leave goes to them, then on to HR. Managers' leave goes to HR, then the Director.</p></div></section>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    @if (data is not null)
+    {
+        <section class="card">
+            <h3>Who gives the final approval</h3>
+            <div class="form-grid">
+                <label class="field"><span>Employee leave ends at level (HR)</span><input type="number" min="1" max="10" @bind="empFinal" /></label>
+                <label class="field"><span>Manager leave ends at level (Director)</span><input type="number" min="1" max="10" @bind="mgrFinal" /></label>
+            </div>
+            <p class="muted note">These are the levels on the Leave Approvals right in Roles and Access. Set HR's role to the first number and the Director's role to the second. Applies to new requests.</p>
+            <div class="form-actions"><button type="button" class="btn primary" @onclick="SaveRule" disabled="@busy">Save levels</button></div>
+        </section>
+
+        <section class="card">
+            <h3>Departments</h3>
+            <table class="tbl rows">
+                <thead><tr><th>Department</th><th>First approver</th><th class="r">People</th><th>Active</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var d in drafts)
+                    {
+                        <tr>
+                            <td><input type="text" @bind="d.Name" maxlength="80" /></td>
+                            <td><select @bind="d.Approver"><option value="">Not set (employee picks)</option>@foreach (var a in data.Approvers) { <option value="@a.Id">@Fmt.Title(a.Name) | @a.RoleName (level @a.Level)</option> }</select></td>
+                            <td class="r">@d.Members</td>
+                            <td><input type="checkbox" @bind="d.Active" /></td>
+                            <td class="r"><button type="button" class="btn primary sm" @onclick="() => SaveDept(d)" disabled="@busy">Save</button> <button type="button" class="btn ghost sm" @onclick="() => DeleteDept(d)" disabled="@busy">Delete</button></td>
+                        </tr>
+                    }
+                    <tr>
+                        <td><input type="text" placeholder="New department" @bind="newName" maxlength="80" /></td>
+                        <td><select @bind="newApprover"><option value="">Not set (employee picks)</option>@foreach (var a in data.Approvers) { <option value="@a.Id">@Fmt.Title(a.Name) | @a.RoleName (level @a.Level)</option> }</select></td>
+                        <td></td><td></td>
+                        <td class="r"><button type="button" class="btn primary sm" @onclick="AddDept" disabled="@busy">Add</button></td>
+                    </tr>
+                </tbody>
+            </table>
+            <p class="muted note">Only people who hold the Leave Approvals menu can be a first approver. If a person needs to approve and isn't listed, give their role that menu in Roles and Access.</p>
+        </section>
+
+        <section class="card">
+            <h3>People</h3>
+            <div class="toolbar">
+                <label class="search flat"><Icon Name="search" Size="18" /><input type="text" placeholder="Find an employee" @bind="filter" @bind:event="oninput" /></label>
+                <select class="sel" @bind="deptFilter"><option value="">All departments</option><option value="none">No department</option>@foreach (var d in data.Departments) { <option value="@d.Id">@d.Name</option> }</select>
+            </div>
+            <table class="tbl rows">
+                <thead><tr><th></th><th>Employee</th><th class="hide-sm">Designation</th><th>Department</th></tr></thead>
+                <tbody>
+                    @foreach (var m in Shown)
+                    {
+                        <tr><td><input type="checkbox" checked="@picked.Contains(m.EmpCode)" @onchange="e => Toggle(m.EmpCode, (bool)(e.Value ?? false))" /></td>
+                            <td><strong>@Fmt.Title(m.Name)</strong><small> @m.EmpCode</small></td><td class="hide-sm">@m.Designation</td><td>@(m.DeptName ?? "-")</td></tr>
+                    }
+                    @if (!Shown.Any()) { <tr><td colspan="4" class="empty-row">No one matches.</td></tr> }
+                </tbody>
+            </table>
+            <div class="form-actions">
+                <span class="muted">@picked.Count selected</span>
+                <select class="sel" @bind="moveTo"><option value="">Move to...</option>@foreach (var d in data.Departments.Where(d => d.Active)) { <option value="@d.Id">@d.Name</option> }</select>
+                <button type="button" class="btn primary" @onclick="Move" disabled="@(busy || picked.Count == 0 || moveTo == "")">Move</button>
+                <button type="button" class="btn ghost" @onclick="Remove" disabled="@(busy || picked.Count == 0)">Take out of department</button>
+            </div>
+        </section>
+    }
+</State>
+@if (toast is not null) { <div class="toast">@toast</div> }
+
+@code {
+    sealed class Draft { public int Id; public string Name = ""; public string Approver = ""; public bool Active = true; public int Members; }
+
+    DepartmentOverview? data;
+    List<Draft> drafts = [];
+    List<DeptMember> members = [];
+    HashSet<string> picked = [];
+    int empFinal = 8, mgrFinal = 10;
+    string newName = "", newApprover = "", filter = "", deptFilter = "", moveTo = "";
+    bool loading = true, busy;
+    string? error, toast;
+
+    IEnumerable<DeptMember> Shown => members
+        .Where(m => string.IsNullOrWhiteSpace(filter) || m.Name.Contains(filter, StringComparison.OrdinalIgnoreCase) || m.EmpCode.Contains(filter, StringComparison.OrdinalIgnoreCase))
+        .Where(m => deptFilter == "" || (deptFilter == "none" ? m.DeptId is null : m.DeptId?.ToString() == deptFilter));
+
+    protected override Task OnInitializedAsync() => Load();
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try
+        {
+            data = await Portal.Departments();
+            members = await Portal.DepartmentMembers() ?? [];
+            if (data is not null)
+            {
+                empFinal = data.Rule.EmployeeFinal; mgrFinal = data.Rule.ManagerFinal;
+                drafts = data.Departments.Select(d => new Draft { Id = d.Id, Name = d.Name, Approver = d.ApproverUserId ?? "", Active = d.Active, Members = d.Members }).ToList();
+            }
+            picked.Clear();
+        }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+
+    void Toggle(string code, bool on) { if (on) picked.Add(code); else picked.Remove(code); }
+
+    async Task Do(Func<Task<WriteResult>> action, string done)
+    {
+        busy = true;
+        var r = await action();
+        busy = false;
+        if (!r.Ok) { await Toast(r.Error ?? "That didn't work."); return; }
+        await Load();
+        await Toast(done);
+    }
+
+    Task SaveRule() => Do(() => Portal.SaveLeaveRule(new LeaveRule(empFinal, mgrFinal)), "Levels saved");
+    Task SaveDept(Draft d) => Do(() => Portal.SaveDepartment(d.Id, d.Name, d.Approver == "" ? null : d.Approver, d.Active), "Department saved");
+    Task DeleteDept(Draft d) => Do(() => Portal.DeleteDepartment(d.Id), "Department deleted");
+    Task AddDept() => Do(async () => { var r = await Portal.SaveDepartment(null, newName, newApprover == "" ? null : newApprover, true); if (r.Ok) { newName = ""; newApprover = ""; } return r; }, "Department added");
+    Task Move() => Do(() => Portal.AssignDepartment(int.Parse(moveTo), picked.ToList()), "People moved");
+    Task Remove() => Do(() => Portal.AssignDepartment(null, picked.ToList()), "Taken out of their department");
+
+    async Task Toast(string message) { toast = message; StateHasChanged(); await Task.Delay(3500); toast = null; StateHasChanged(); }
+}

@@ -1,5 +1,6 @@
 ﻿@inherits LayoutComponentBase
 @implements IDisposable
+@inject IJSRuntime Js
 @inject AuthState Auth
 @inject HrmsClient Api
 @inject PortalClient Portal
@@ -33,10 +34,38 @@ else
                 </button>
                 @if (menu)
                 {
-                    <div class="user-menu" @onclick="() => menu = false">
-                        <div class="um-head"><strong>@Fmt.Title(Auth.User!.FullName)</strong><small>@Auth.User!.UserId | @Auth.User!.RoleName</small><small>@Auth.User!.Company | FY @Auth.User!.FinYear</small></div>
-                        <button type="button" class="neutral" @onclick='() => Nav.NavigateTo("change-password")'><Icon Name="key" Size="16" /> Change password</button>
-                        <button type="button" @onclick="SignOut"><Icon Name="logout" Size="16" /> Sign out</button>
+                    <div class="menu-back" @onclick="() => menu = false"></div>
+                    <div class="user-menu pm" role="menu" aria-label="User profile menu">
+                        <div class="pm-in">
+                            <div class="pm-head">
+                                <span class="pm-av">@PmInitials<i class="pm-dot"></i></span>
+                                <div class="pm-who"><b>@Fmt.Title(Auth.User!.FullName)</b><small>@Auth.User!.UserId | @Auth.User!.Company | FY @Auth.User!.FinYear</small><span class="pm-chip">@Auth.User!.RoleName</span></div>
+                            </div>
+                            <div class="pm-sec">
+                                <div class="pm-cap"><span>PORTAL ROLE</span><i>1 role</i></div>
+                                <div class="pm-role"><span class="pm-roleico"><Icon Name="user" Size="18" /></span><b>@Auth.User!.RoleName.ToUpperInvariant()</b><em><Icon Name="check" Size="11" /> Active</em></div>
+                            </div>
+                            <div class="pm-links">
+                                @if (Auth.HasMenu("H105")) { <button type="button" @onclick='() => GoTo("my/profile")'><span class="pm-lico"><Icon Name="user" Size="16" /></span> View full profile <Icon Name="chevron-right" Size="14" /></button> }
+                                <button type="button" @onclick='() => GoTo("my/org")'><span class="pm-lico"><Icon Name="users" Size="16" /></span> My organization chart <Icon Name="chevron-right" Size="14" /></button>
+                                <button type="button" @onclick='() => GoTo("change-password")'><span class="pm-lico"><Icon Name="key" Size="16" /></span> Change password <Icon Name="chevron-right" Size="14" /></button>
+                            </div>
+                            <div class="pm-sec">
+                                <div class="pm-cap"><span>PREFERENCES</span></div>
+                                <div class="pm-row"><span class="pm-label"><b>Theme colour</b></span><span class="pm-theme-name">@ThemeName</span></div>
+                                <div class="pm-seg two">
+                                    <button type="button" class="@(themeMode == "role" ? "on" : "")" @onclick='() => SetTheme("role")'>Role Color</button>
+                                    <button type="button" class="@(themeMode != "role" ? "on" : "")" @onclick='() => SetTheme("normal")'>Normal Color</button>
+                                </div>
+                                <div class="pm-size">
+                                    <div class="pm-label"><b>Screen text size</b></div>
+                                    <div class="pm-seg">
+                                        @foreach (var (key, label) in TextSizes) { var k = key; <button type="button" class="@(textSize == k ? "on" : "")" @onclick="() => SetTextSize(k)">@label</button> }
+                                    </div>
+                                </div>
+                            </div>
+                            <button type="button" class="pm-out" @onclick="SignOut"><Icon Name="logout" Size="15" /> Sign out</button>
+                        </div>
                     </div>
                 }
             </div>
@@ -96,6 +125,48 @@ else
 @code {
     ErrorBoundary? boundary;
     bool menu, more;
+    string textSize = "default", themeMode = "normal";
+    int ApprovalLevel => Auth.User is not null && Auth.User.Rights.TryGetValue("H201", out var r) ? r.Level : 0;
+    // a colour for the kind of role: leaders, HR, managers, everyone else
+    string ThemeKey => Auth.User is null ? "" : ApprovalLevel >= 10 ? "rose" : (Auth.Can("H303") || ApprovalLevel >= 8) ? "violet" : Auth.Can("H201") ? "blue" : "teal";
+    string ThemeName => themeMode != "role" ? "Indigo (Normal)" : ThemeKey switch { "rose" => "Crimson Rose (Leadership)", "violet" => "Royal Violet (HR)", "blue" => "Sapphire Blue (Managers)", _ => "Emerald Teal (Workforce)" };
+
+    async Task ApplyTheme()
+    {
+        try { await Js.InvokeVoidAsync("document.documentElement.setAttribute", "data-theme", themeMode == "role" ? ThemeKey : ""); } catch { }
+    }
+
+    async Task SetTheme(string mode)
+    {
+        themeMode = mode;
+        try { await Js.InvokeVoidAsync("localStorage.setItem", "hrms-theme", mode); } catch { }
+        await ApplyTheme();
+    }
+    static readonly (string Key, string Label)[] TextSizes = [("small", "Small"), ("default", "Default"), ("large", "Large"), ("xl", "XL")];
+    static readonly Dictionary<string, string> Zoom = new() { ["small"] = ".72", ["default"] = ".82", ["large"] = ".92", ["xl"] = "1.02" };
+    string PmInitials => string.Concat((Auth.User?.FullName ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(2).Select(p => char.ToUpperInvariant(p[0])));
+
+    void GoTo(string route) { menu = false; Nav.NavigateTo(route); }
+
+    // the screen size is the page zoom; it is remembered on this device
+    async Task SetTextSize(string key)
+    {
+        textSize = key;
+        try
+        {
+            await Js.InvokeVoidAsync("document.documentElement.style.setProperty", "--z", Zoom[key]);
+            await Js.InvokeVoidAsync("localStorage.setItem", "hrms-text-size", key);
+        }
+        catch { }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try { var tm = await Js.InvokeAsync<string?>("localStorage.getItem", "hrms-theme"); if (tm == "role") { themeMode = "role"; await ApplyTheme(); StateHasChanged(); } } catch { }
+        try { var saved = await Js.InvokeAsync<string?>("localStorage.getItem", "hrms-text-size"); if (saved is not null && Zoom.ContainsKey(saved)) { textSize = saved; await Js.InvokeVoidAsync("document.documentElement.style.setProperty", "--z", Zoom[saved]); StateHasChanged(); } }
+        catch { }
+    }
 
     protected override void OnInitialized()
     {

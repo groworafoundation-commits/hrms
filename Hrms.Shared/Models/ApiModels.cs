@@ -25,6 +25,12 @@ public class LeaveRow
     public string? TransNo { get; set; }
     public string? HeldBy { get; set; }
     public string? HeldByName { get; set; }
+    public string? RejectReason { get; set; }
+    public string? Reason { get; set; }
+    public int Level { get; set; }
+    public int FinalLevel { get; set; }
+    public string? HeldByRole { get; set; }
+    public string? Remarks { get; set; }
 }
 
 public class EmployeeRow

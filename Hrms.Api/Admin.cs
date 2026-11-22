@@ -236,6 +236,7 @@ FROM inter01.EMPLOYEELEAVEDETAILS l JOIN inter01.EmployeeMaster e ON e.EmpCode =
 WHERE l.Userid = @me AND ISNULL(l.Deleteflag,0) = 0 AND ISNULL(l.Userlevel,0) < ISNULL(l.documentlevel,0)
 ORDER BY l.Applieddate, l.FromDate", new { me = Caller(ctx).UserId })).ToList();
             foreach (var l in rows) { l.LeaveName = LeaveTypes.Name(l.LeaveType); l.Facts = await Workflow.Facts(c, l); }
+            await LeaveNotes.Fill(c, rows);
             return rows;
         });
 
@@ -263,7 +264,8 @@ ORDER BY l.Applieddate, l.FromDate", new { me = Caller(ctx).UserId })).ToList();
             {
                 var (emp, transNo, docLevel) = await Held(c, null, id, me);
                 var level = MyLevel(me);
-                var push = level >= docLevel ? [] : await Workflow.Approvers(c, null, level, me.UserId, emp);
+                // only people up to the level where this request ends: nobody above that has a part in it
+                var push = level >= docLevel ? [] : (await Workflow.Approvers(c, null, level, me.UserId, emp)).Where(a => a.Level <= docLevel).ToList();
                 var back = (await c.QueryAsync<Approver>(@"
 SELECT t.Userid AS Id, ISNULL(NULLIF(MAX(u.name),''), MAX(u.username)) AS Name, MAX(r.rolename) AS RoleName, CAST(MAX(t.Auth) AS int) AS Level
 FROM inter01.UserwiseTransaction t JOIN interface.Userdef u ON u.userid = t.Userid LEFT JOIN interface.Roledef r ON r.roleid = u.roleid
@@ -282,7 +284,7 @@ WHERE t.TransNo = @transNo AND t.Userid <> @me AND t.Userid <> @emp GROUP BY t.U
             if (level < docLevel)
             {
                 if (string.IsNullOrWhiteSpace(x.To)) throw new ApiException("Choose who this goes to next.");
-                next = (await Workflow.Approvers(c, tx, level, me.UserId, emp)).FirstOrDefault(a => a.Id == x.To) ?? throw new ApiException("That person cannot approve leave requests above you.");
+                next = (await Workflow.Approvers(c, tx, level, me.UserId, emp)).FirstOrDefault(a => a.Id == x.To && a.Level <= docLevel) ?? throw new ApiException("That person cannot approve leave requests above you.");
             }
             await c.ExecuteAsync("UPDATE inter01.EMPLOYEELEAVEDETAILS SET Userlevel=@level WHERE Id=@id", new { id, level }, tx);
             await Workflow.Log(c, tx, transNo, me.UserId, level, Nz(x.Note));
@@ -312,6 +314,10 @@ WHERE t.TransNo = @transNo AND t.Userid = @to AND t.Userid <> @me AND t.Userid <
             var me = Caller(ctx);
             var (emp, transNo, _) = await Held(c, tx, id, me);
             if (string.IsNullOrWhiteSpace(x.Note)) throw new ApiException("Write the reason for rejecting this request.");
+            if (await Workflow.Describe(c, tx, id) is { } kept)
+                await c.ExecuteAsync(@"INSERT hrms.LeaveRejection (EmpCode, LeaveType, FromDate, ToDate, Days, TransNo, Applied, Reason, RejectedBy)
+                    SELECT @EmpCode, @LeaveType, @FromDate, @ToDate, @Days, @transNo, (SELECT Applieddate FROM inter01.EMPLOYEELEAVEDETAILS WHERE Id=@id), @reason, @by",
+                    new { kept.EmpCode, kept.LeaveType, kept.FromDate, kept.ToDate, kept.Days, transNo, id, reason = x.Note.Trim(), by = me.UserId }, tx);
             if (await Workflow.Describe(c, tx, id) is { } info)
                 await Notifier.Send(c, tx, emp, "leave", "Your leave request was rejected", Workflow.Summary(info) + ". Reason: " + x.Note.Trim(), "my/leave");
             await Workflow.Log(c, tx, transNo, me.UserId, MyLevel(me), "Rejected: " + x.Note.Trim());

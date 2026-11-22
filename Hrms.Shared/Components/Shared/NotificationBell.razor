@@ -86,7 +86,17 @@
     {
         if (n.ReadAt is null) { await Portal.MarkRead(n.Id); n.ReadAt = DateTime.Now; unread = Math.Max(0, unread - 1); }
         open = false;
-        if (!string.IsNullOrEmpty(n.Link)) Nav.NavigateTo(n.Link);
+        if (!string.IsNullOrEmpty(n.Link)) await GoTo(n.Link);
+    }
+
+    // Navigating to the page you are already on does not reload it, so the new item stays hidden until you leave and come back.
+    // Step off the page for a moment so it loads again.
+    async Task GoTo(string link)
+    {
+        var here = Nav.ToBaseRelativePath(Nav.Uri).Split('?')[0].Trim('/');
+        var there = link.Split('?')[0].Trim('/');
+        if (string.Equals(here, there, StringComparison.OrdinalIgnoreCase)) { Nav.NavigateTo("/", replace: true); await Task.Delay(80); }
+        Nav.NavigateTo(link);
     }
 
     async Task Dismiss(NotificationItem n)

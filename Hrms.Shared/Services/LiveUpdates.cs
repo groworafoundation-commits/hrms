@@ -9,7 +9,7 @@ public static class LiveUpdates
     // The outcome of a leave decision, read from the notification title the API writes, so it can be shown as a coloured badge.
     public static (string Label, string Css)? Outcome(NotificationItem n)
     {
-        if (n.Kind != "leave") return null;
+        if (n.Kind is not ("leave" or "request")) return null;
         var t = n.Title.ToLowerInvariant();
         if (t.Contains("rejected")) return ("Rejected", "badge-rejected");
         if (t.Contains("approved")) return ("Approved", "badge-approved");

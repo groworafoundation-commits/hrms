@@ -12,7 +12,8 @@ DECLARE @o TABLE (id nvarchar(20), name nvarchar(80), route nvarchar(500), icon 
 INSERT @o VALUES
  ('H107', 'My Assets',  'my/assets',       'laptop',  7),
  ('H301', 'Assets',     'admin/assets',    'laptop', 27),
- ('H302', 'Clearance',  'admin/clearance', 'check',  28);
+ ('H302', 'Clearance',  'admin/clearance', 'check',  28),
+ ('H303', 'Departments', 'admin/departments', 'users', 29);
 INSERT interface.interface (OPTIONID, OPTIONNAME, ACTIVESTAT, SEQUENCE, LEVELCODE, VISIBLE, PRGNAME, SUBMENU, Appid, AuthLevel, PICTURE1, ReportPage, htmleditor, paytermspage, bizapirequired, optimize, sendmail)
 SELECT id, name, '1', seq, 'HRMS', '1', route, '0', 'HRMS', 0, icon, 0, 0, '', 0, 0, 0 FROM @o o
 WHERE NOT EXISTS (SELECT 1 FROM interface.interface i WHERE i.OPTIONID = o.id);
@@ -22,10 +23,10 @@ DECLARE @r TABLE (role nvarchar(16), opt nvarchar(16), v bit, a bit, m bit, d bi
 INSERT @r VALUES
  ('HRM-EMP','H107',1,1,0,0,0),
  ('HRM-MGR','H107',1,1,0,0,0), ('HRM-MGR','H301',1,1,1,0,1), ('HRM-MGR','H302',1,1,1,0,1),
- ('HRM-ADM','H107',1,1,1,1,1), ('HRM-ADM','H301',1,1,1,1,1), ('HRM-ADM','H302',1,1,1,1,1);
+ ('HRM-ADM','H107',1,1,1,1,1), ('HRM-ADM','H301',1,1,1,1,1), ('HRM-ADM','H302',1,1,1,1,1), ('HRM-ADM','H303',1,1,1,1,1);
 INSERT interface.accessright (roleid, optionid, addd, modifyy, delete1, access, [level], Prints, SinglePush)
 SELECT x.role, x.opt, x.a, x.m, x.d, x.v,
-       CASE WHEN x.role = 'HRM-ADM' AND x.opt IN ('H301','H302') THEN 10
+       CASE WHEN x.role = 'HRM-ADM' AND x.opt IN ('H301','H302','H303') THEN 10
             ELSE ISNULL((SELECT TOP 1 CAST(ar.[level] AS int) FROM interface.accessright ar WHERE ar.roleid = x.role AND ar.optionid IN ('H106','H201') ORDER BY CASE ar.optionid WHEN 'H106' THEN 0 ELSE 1 END), 10) END,
        x.p, 0
 FROM @r x
@@ -35,6 +36,49 @@ WHERE EXISTS (SELECT 1 FROM interface.Roledef d WHERE d.roleid = x.role)
     static readonly string[] Batches =
     [
         "IF SCHEMA_ID(N'hrms') IS NULL EXEC('CREATE SCHEMA hrms')",
+
+        // the employee's own reason for a leave request, kept beside the ERP's leave record by its transaction number
+        @"IF OBJECT_ID('hrms.LeaveNote') IS NULL
+CREATE TABLE hrms.LeaveNote (
+    TransNo nvarchar(50) NOT NULL PRIMARY KEY,
+    Reason nvarchar(500) NOT NULL,
+    CreatedAt datetime NOT NULL CONSTRAINT DF_LeaveNote_At DEFAULT GETDATE())",
+
+        // Departments, the people in them, and the leave rule (the level at which a request is fully approved)
+        @"IF OBJECT_ID('hrms.Department') IS NULL
+CREATE TABLE hrms.Department (
+    Id int IDENTITY(1,1) PRIMARY KEY,
+    Name nvarchar(80) NOT NULL,
+    ApproverUserId nvarchar(50) NULL,
+    Active bit NOT NULL CONSTRAINT DF_Department_Active DEFAULT 1)",
+        "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_Department_Name' AND object_id = OBJECT_ID('hrms.Department')) CREATE UNIQUE INDEX UX_Department_Name ON hrms.Department (Name)",
+        @"IF OBJECT_ID('hrms.EmployeeDepartment') IS NULL
+CREATE TABLE hrms.EmployeeDepartment (
+    EmpCode nvarchar(50) NOT NULL PRIMARY KEY,
+    DeptId int NOT NULL,
+    UpdatedBy nvarchar(50) NULL,
+    UpdatedAt datetime NOT NULL CONSTRAINT DF_EmpDept_At DEFAULT GETDATE())",
+        @"IF OBJECT_ID('hrms.LeaveRule') IS NULL
+CREATE TABLE hrms.LeaveRule (
+    EmployeeFinalLevel int NOT NULL CONSTRAINT DF_LeaveRule_E DEFAULT 8,
+    ManagerFinalLevel int NOT NULL CONSTRAINT DF_LeaveRule_M DEFAULT 10)",
+        "IF NOT EXISTS (SELECT 1 FROM hrms.LeaveRule) INSERT hrms.LeaveRule (EmployeeFinalLevel, ManagerFinalLevel) VALUES (8, 10)",
+
+        // Leave that was rejected: the ERP's delete procedure removes the request, so the reason and dates are kept here for the employee's list.
+        @"IF OBJECT_ID('hrms.LeaveRejection') IS NULL
+CREATE TABLE hrms.LeaveRejection (
+    Id int IDENTITY(1,1) PRIMARY KEY,
+    EmpCode nvarchar(50) NOT NULL,
+    LeaveType nvarchar(50) NULL,
+    FromDate date NOT NULL,
+    ToDate date NOT NULL,
+    Days decimal(9,2) NULL,
+    TransNo nvarchar(50) NULL,
+    Applied date NULL,
+    Reason nvarchar(500) NULL,
+    RejectedBy nvarchar(100) NULL,
+    RejectedAt datetime NOT NULL CONSTRAINT DF_LeaveRejection_At DEFAULT GETDATE())",
+        "IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_LeaveRejection_Emp' AND object_id = OBJECT_ID('hrms.LeaveRejection')) CREATE INDEX IX_LeaveRejection_Emp ON hrms.LeaveRejection (EmpCode, FromDate)",
 
         @"IF OBJECT_ID(N'hrms.Asset') IS NULL
 CREATE TABLE hrms.Asset (
@@ -175,7 +219,7 @@ END",
         try
         {
             await using var c = db.OpenWrite();
-            foreach (var sql in Batches) await c.ExecuteAsync(sql);
+            foreach (var sql in Batches.Concat(RequestSchema.Batches)) await c.ExecuteAsync(sql);
             log.LogInformation("Asset tables and menus are in place.");
         }
         catch (Exception ex)

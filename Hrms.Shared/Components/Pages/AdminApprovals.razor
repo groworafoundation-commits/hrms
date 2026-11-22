@@ -16,7 +16,7 @@
                 {
                     <tr>
                         <td><div class="who"><Avatar Name="@l.Name" Size="34" /><div><strong>@Fmt.Title(l.Name)</strong><small>@l.EmpCode | requested @Fmt.Date(l.Applied)</small></div></div></td>
-                        <td>@l.LeaveName</td>
+                        <td>@l.LeaveName@if (!string.IsNullOrEmpty(l.Reason)) { <small class="leave-reason">@l.Reason</small> }</td>
                         <td>@Fmt.Range(l.FromDate, l.ToDate)</td>
                         <td class="r">@l.Days.ToString("0.#")</td>
                         <td class="hide-sm">@(l.FromUser is null ? "-" : Fmt.Title(l.FromUser))@if (!string.IsNullOrEmpty(l.Note)) { <small class="muted"> "@l.Note"</small> }</td>
@@ -29,6 +29,30 @@
     </section>
 </State>
 
+@if (all is not null)
+{
+    <section class="card">
+        <h3>All requests waiting (HR)</h3>
+        <p class="muted note">Move a request to someone else, for example when the approver is away.</p>
+        <table class="tbl rows">
+            <thead><tr><th>Employee</th><th>Dates</th><th>With</th><th>Move to</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var l in all.Rows)
+                {
+                    <tr>
+                        <td><strong>@Fmt.Title(l.Name)</strong><small> @l.EmpCode | @l.LeaveName</small></td>
+                        <td>@Fmt.Range(l.FromDate, l.ToDate)</td>
+                        <td>@(string.IsNullOrEmpty(l.HeldByName) ? l.HeldBy : Fmt.Title(l.HeldByName))</td>
+                        <td><select @bind="moveTo[l.Id]"><option value="">Choose</option>@foreach (var a in all.Assignable.Where(a => a.Id != l.HeldBy)) { <option value="@a.Id">@Fmt.Title(a.Name) | @a.RoleName</option> }</select></td>
+                        <td class="r"><button type="button" class="btn ghost sm" @onclick="() => Reassign(l)" disabled="@(!moveTo.TryGetValue(l.Id, out var who) || string.IsNullOrEmpty(who))">Move</button></td>
+                    </tr>
+                }
+                @if (all.Rows.Count == 0) { <tr><td colspan="5" class="empty-row">No requests are waiting.</td></tr> }
+            </tbody>
+        </table>
+    </section>
+}
+
 @if (current is not null)
 {
     <LeaveReviewModal Row="current" OnClose="Close" OnDone="Done" />
@@ -37,6 +61,8 @@
 
 @code {
     List<ApprovalRow> rows = [];
+    PendingAll? all;
+    Dictionary<long, string> moveTo = [];
     ApprovalRow? current;
     bool loading = true;
     string? error, toast;
@@ -46,12 +72,19 @@
     async Task Load()
     {
         loading = true; error = null;
+        try { all = await Portal.AllPending(); foreach (var l in all?.Rows ?? []) moveTo.TryAdd(l.Id, ""); } catch { all = null; }   // only HR may see this list
         try { rows = await Portal.Approvals() ?? []; }
         catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
         loading = false;
     }
 
     Task Close() { current = null; return Task.CompletedTask; }
+
+    async Task Reassign(LeaveRow l)
+    {
+        var r = await Portal.Reassign(l.Id, moveTo[l.Id], null);
+        await Done(r.Ok ? "Request moved" : (r.Error ?? "That didn't work."));
+    }
 
     async Task Done(string message)
     {

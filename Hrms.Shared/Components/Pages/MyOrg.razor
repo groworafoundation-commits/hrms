@@ -1,0 +1,101 @@
+@page "/my/org"
+@inject PortalClient Portal
+@inject AuthState Auth
+
+<PageTitle>Organization chart</PageTitle>
+
+<section class="card rq-head">
+    <div class="rq-head-text">
+        <span class="rq-tag">ORGANISATION</span>
+        <h1>@(company ? "Company organization chart" : "My organization chart")</h1>
+        <p>@(company ? "Leadership, HR and every department with its first approver." : "Who your leave and requests go to, and who works alongside you.")</p>
+    </div>
+    @if (Auth.Can("H303"))
+    {
+        <div class="rq-head-tools"><div class="rq-seg">
+            <button type="button" class="@(!company ? "on" : "")" @onclick="() => Show(false)">My chart</button>
+            <button type="button" class="@(company ? "on" : "")" @onclick="() => Show(true)">Company chart</button></div></div>
+    }
+</section>
+
+<State Loading="@loading" Error="@error" OnRetry="Load">
+    @if (!company && mine is not null)
+    {
+        <section class="card org-scroll">
+            <div class="org">
+                @if (mine.Chain.Count > 0)
+                {
+                    @foreach (var group in Groups)
+                    {
+                        <div class="org-level">@foreach (var n in group) { <div class="org-card"><Avatar Name="@n.Name" Size="38" /><div><b>@n.Name</b><small>@(n.RoleName ?? n.Title)@(n.Level > 0 ? $" | Level {n.Level}" : "")</small>@if (n.Dept is not null) { <span class="org-tag">@n.Dept</span> }</div></div> }</div>
+                    }
+                }
+                <div class="org-level"><div class="org-card me"><Avatar Name="@mine.Me.Name" Size="42" /><div><b>@mine.Me.Name</b><small>@(mine.Me.RoleName ?? mine.Me.Title)@(mine.Me.Level > 0 ? $" | Level {mine.Me.Level}" : "")</small><span class="org-tag">You</span></div></div></div>
+            </div>
+            @if (mine.Note is not null) { <p class="muted note">@mine.Note</p> }
+        </section>
+
+        @if (mine.Reports.Count > 0)
+        {
+            <section class="card org-sec"><h3>People who report to you (@mine.Reports.Count)</h3>
+                <div class="org-grid">@foreach (var n in mine.Reports) { <div class="org-mini"><Avatar Name="@n.Name" Size="32" /><div><b>@n.Name</b><small>@(n.Title ?? n.Dept)</small></div></div> }</div></section>
+        }
+        @if (mine.Team.Count > 0)
+        {
+            <section class="card org-sec"><h3>Working with you in @mine.Dept (@mine.Team.Count)</h3>
+                <div class="org-grid">@foreach (var n in mine.Team) { <div class="org-mini"><Avatar Name="@n.Name" Size="32" /><div><b>@n.Name</b><small>@n.Title</small></div></div> }</div></section>
+        }
+    }
+    else if (company && all is not null)
+    {
+        <section class="card org-scroll">
+            <div class="org">
+                @if (all.Leaders.Count > 0) { <div class="org-level">@foreach (var n in all.Leaders) { <div class="org-card"><Avatar Name="@n.Name" Size="38" /><div><b>@n.Name</b><small>@(n.RoleName) | Level @n.Level</small></div></div> }</div> }
+                @if (all.Hr.Count > 0) { <div class="org-level">@foreach (var n in all.Hr) { <div class="org-card"><Avatar Name="@n.Name" Size="38" /><div><b>@n.Name</b><small>@(n.RoleName) | Level @n.Level</small></div></div> }</div> }
+            </div>
+        </section>
+        <section class="org-grid org-sec" style="grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));">
+            @foreach (var d in all.Departments)
+            {
+                <article class="org-dept">
+                    <h4>@d.Name <span class="org-deptcount">@d.Members.Count</span></h4>
+                    @if (d.Head is not null) { <div class="org-card"><Avatar Name="@d.Head.Name" Size="34" /><div><b>@d.Head.Name</b><small>@d.Head.RoleName | first approver</small></div></div> }
+                    else { <p class="muted">No first approver set.</p> }
+                    <div class="org-grid" style="grid-template-columns: 1fr;">@foreach (var m in d.Members.Where(m => d.Head is null || m.Id != d.Head.Id).Take(12)) { <div class="org-mini"><Avatar Name="@m.Name" Size="28" /><div><b>@m.Name</b><small>@m.Title</small></div></div> }
+                        @if (d.Members.Count > 12) { <small class="muted">and @(d.Members.Count - 12) more</small> }</div>
+                </article>
+            }
+        </section>
+        @if (all.Unassigned.Count > 0)
+        {
+            <section class="card org-sec"><h3>Not in a department yet (@all.Unassigned.Count)</h3>
+                <div class="org-grid">@foreach (var n in all.Unassigned.Take(60)) { <div class="org-mini"><Avatar Name="@n.Name" Size="28" /><div><b>@n.Name</b><small>@n.Title</small></div></div> }</div></section>
+        }
+    }
+</State>
+
+@code {
+    OrgView? mine;
+    OrgCompany? all;
+    bool company, loading = true;
+    string? error;
+
+    // top-down levels: leadership, HR, then the first approver
+    IEnumerable<List<OrgNode>> Groups => mine is null ? [] : mine.Chain.GroupBy(n => n.Dept is not null ? 0 : -n.Level).OrderBy(g => g.Key).Select(g => g.ToList());
+
+    protected override Task OnInitializedAsync() => Load();
+
+    async Task Show(bool c) { company = c; await Load(); }
+
+    async Task Load()
+    {
+        loading = true; error = null;
+        try
+        {
+            if (company) all ??= await Portal.CompanyOrg();
+            else mine ??= await Portal.MyOrg();
+        }
+        catch (Exception ex) { error = ex.GetType().Name + ": " + ex.Message; }
+        loading = false;
+    }
+}

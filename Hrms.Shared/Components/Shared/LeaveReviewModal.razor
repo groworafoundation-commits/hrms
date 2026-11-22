@@ -6,9 +6,13 @@
         <dl class="facts2">
             <div><dt>Leave</dt><dd>@Row.LeaveName, @Fmt.Range(Row.FromDate, Row.ToDate) (@Row.Days.ToString("0.#") days)</dd></div>
             <div><dt>Requested</dt><dd>@Fmt.Date(Row.Applied)</dd></div>
+            @if (!string.IsNullOrEmpty(Row.Reason)) { <div><dt>Reason</dt><dd>@Row.Reason</dd></div> }
+            @if (!string.IsNullOrEmpty(Row.Remarks)) { <div><dt>Remarks</dt><dd>@Row.Remarks</dd></div> }
             <div><dt>Came from</dt><dd>@(Row.FromUser is null ? "-" : Fmt.Title(Row.FromUser))@if (!string.IsNullOrEmpty(Row.Note)) { <span class="muted"> "@Row.Note"</span> }</dd></div>
             @if (opt is not null) { <div><dt>Your level</dt><dd>@opt.Level (final approval at @opt.DocLevel)</dd></div> }
         </dl>
+
+        <AttachmentList OwnerType="leave" OwnerKey="@Row.TransNo" />
 
         @if (Row.Facts.Count > 0) { <div class="facts-box"><b>Good to know</b><ul class="facts-list">@foreach (var f in Row.Facts) { <li>@f</li> }</ul></div> }
 
